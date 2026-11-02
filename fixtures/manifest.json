@@ -1,0 +1,450 @@
+{
+  "generator": "research/make_fixtures.py",
+  "upstream": "AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
+  "torch": "2.15.0",
+  "cut_threshold": 0.25,
+  "synthetic_shots": [
+    [
+      0,
+      29
+    ],
+    [
+      30,
+      59
+    ],
+    [
+      60,
+      89
+    ]
+  ],
+  "vfr_frame_times": [
+    0.0,
+    0.033333,
+    0.066667,
+    0.133333,
+    0.166667,
+    0.2,
+    0.233333,
+    0.266667,
+    0.3,
+    0.366667,
+    0.4,
+    0.433333,
+    0.466667,
+    0.5,
+    0.533333,
+    0.6,
+    0.633333,
+    0.666667,
+    0.7,
+    0.733333,
+    0.766667,
+    0.833333,
+    0.866667,
+    0.9,
+    0.933333,
+    0.966667,
+    1.0,
+    1.066667,
+    1.1,
+    1.133333,
+    1.166667,
+    1.2,
+    1.233333,
+    1.3,
+    1.333333,
+    1.366667,
+    1.4,
+    1.433333,
+    1.466667,
+    1.533333,
+    1.566667,
+    1.6,
+    1.633333,
+    1.666667,
+    1.7,
+    1.766667,
+    1.8,
+    1.833333,
+    1.866667,
+    1.9,
+    1.933333
+  ],
+  "files": {
+    "comic_ailut_out": {
+      "file": "comic_ailut_out.png",
+      "dtype": "uint8",
+      "shape": [
+        274,
+        640,
+        3
+      ],
+      "note": "upstream AiLUT kernel",
+      "sha256": "6be68ec12273e7c6b4c430bf89bfcd2752cf8ebbf79b4675cc93b04d66eb2ed1",
+      "bytes": 408910
+    },
+    "comic_in": {
+      "file": "comic_in.png",
+      "dtype": "uint8",
+      "shape": [
+        274,
+        640,
+        3
+      ],
+      "note": "input, 8-bit sRGB-ish display-referred",
+      "sha256": "9178fdf17ce8b8262f2fffa5f26f702193b7eef7821ecb7fcc8a0265a0142a51",
+      "bytes": 353080
+    },
+    "comic_lut": {
+      "file": "comic_lut.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "lut[c][b][g][r]",
+      "sha256": "4c78a1f7e00cac52bf23daa685566da1b778d03252aecd7293ccc6c09c82f874",
+      "bytes": 431244
+    },
+    "comic_resized256": {
+      "file": "comic_resized256.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        256,
+        256
+      ],
+      "note": "bilinear, align_corners=False",
+      "sha256": "3110603421af234886f7bf3f6ea4ee9b45992973b8efe13c64ab66354e3f367d",
+      "bytes": 786432
+    },
+    "comic_vertices": {
+      "file": "comic_vertices.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33
+      ],
+      "note": "per-channel AdaInt vertices",
+      "sha256": "da5b5957bdc9d36db0ca3ca1241c8bdd7387a9a6f42e2e05f7575717337154a2",
+      "bytes": 396
+    },
+    "demo_ailut_out": {
+      "file": "demo_ailut_out.png",
+      "dtype": "uint8",
+      "shape": [
+        426,
+        640,
+        3
+      ],
+      "note": "upstream AiLUT kernel",
+      "sha256": "fdc622656c264fca40b5a9569f2cfb3d5ee4673ca87c9cc67df904c8ce9ae9de",
+      "bytes": 446086
+    },
+    "demo_bake33": {
+      "file": "demo_bake33.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "AiLUT on a uniform 33^3 lattice, unclamped",
+      "sha256": "4953eeb5b0b7c764d70d0595b2a647ec21765e6116785f228a7fff14933a96cf",
+      "bytes": 431244
+    },
+    "demo_in": {
+      "file": "demo_in.png",
+      "dtype": "uint8",
+      "shape": [
+        426,
+        640,
+        3
+      ],
+      "note": "input, 8-bit sRGB-ish display-referred",
+      "sha256": "5ee7c82ee1297e5a12d3b73b710006dc9acd6382e5c4be24ca196d20f75d2429",
+      "bytes": 335251
+    },
+    "demo_lut": {
+      "file": "demo_lut.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "lut[c][b][g][r]",
+      "sha256": "66cd7a0f0bebdb34630f66717fbb779dc6567dca5a0f77bede5d9562235e081e",
+      "bytes": 431244
+    },
+    "demo_resized256": {
+      "file": "demo_resized256.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        256,
+        256
+      ],
+      "note": "bilinear, align_corners=False",
+      "sha256": "928f1c1011f84bbed1c55a718ff1e6f398618397fb9f16dbece9d371fbdf27b2",
+      "bytes": 786432
+    },
+    "demo_vertices": {
+      "file": "demo_vertices.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33
+      ],
+      "note": "per-channel AdaInt vertices",
+      "sha256": "331ea9e686d1521e40417a7d0ccc0da6203359700250a6698ca19e35f5caa789",
+      "bytes": 396
+    },
+    "gym_a_ailut_out": {
+      "file": "gym_a_ailut_out.png",
+      "dtype": "uint8",
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "note": "upstream AiLUT kernel",
+      "sha256": "8300e0a83497a334dafd87b41b6dc65c5bc1067682dbdfc34cc28f0349d3bdd3",
+      "bytes": 302714
+    },
+    "gym_a_in": {
+      "file": "gym_a_in.png",
+      "dtype": "uint8",
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "note": "input, 8-bit sRGB-ish display-referred",
+      "sha256": "2c6d0a2341d7dace2c3cd5f58636ff97fcfeba51e52f2d818a8f5502a538c4b3",
+      "bytes": 295935
+    },
+    "gym_a_lut": {
+      "file": "gym_a_lut.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "lut[c][b][g][r]",
+      "sha256": "267dfee6224e4f006930268b0b5a1eb0b93754b0c1dbf6ee429119e3a14fc498",
+      "bytes": 431244
+    },
+    "gym_a_resized256": {
+      "file": "gym_a_resized256.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        256,
+        256
+      ],
+      "note": "bilinear, align_corners=False",
+      "sha256": "285b1fb9c6476d157e31e1e2d82528ce157e77f0932d89e76ef83914f2c298a0",
+      "bytes": 786432
+    },
+    "gym_a_shot65_out": {
+      "file": "gym_a_shot65_out.png",
+      "dtype": "uint8",
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "note": "upstream uniform LUT kernel, 65^3 shot LUT",
+      "sha256": "50e0d237cf56509d0c4cbf9a1eeaf1f10f31c0511a2dace7e8f6fefdcadad48f",
+      "bytes": 304622
+    },
+    "gym_a_vertices": {
+      "file": "gym_a_vertices.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33
+      ],
+      "note": "per-channel AdaInt vertices",
+      "sha256": "b53be96a5f1bc94ed3173684c8c90e67eb599bf38ddb6620f3caecd419ca95ca",
+      "bytes": 396
+    },
+    "gym_b_ailut_out": {
+      "file": "gym_b_ailut_out.png",
+      "dtype": "uint8",
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "note": "upstream AiLUT kernel",
+      "sha256": "d588860b01f920eb3074f86da43bdc861cf5bac222bb51d6e7b12c06772d0b0b",
+      "bytes": 256143
+    },
+    "gym_b_in": {
+      "file": "gym_b_in.png",
+      "dtype": "uint8",
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "note": "input, 8-bit sRGB-ish display-referred",
+      "sha256": "a7211158bb28eb2280f123c8b1b6d5b6390742e3e0af5bbe619e5a7c53c9f036",
+      "bytes": 236652
+    },
+    "gym_b_lut": {
+      "file": "gym_b_lut.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "lut[c][b][g][r]",
+      "sha256": "de206bd301914417e6c3a749f0432c492652c1d6e25897fdd1c4e5ad91ffbfb3",
+      "bytes": 431244
+    },
+    "gym_b_resized256": {
+      "file": "gym_b_resized256.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        256,
+        256
+      ],
+      "note": "bilinear, align_corners=False",
+      "sha256": "ca89d122c2122f2d89c8ea37b128a553f831a2d78feb5b8a1f3ffbe2e5df394d",
+      "bytes": 786432
+    },
+    "gym_b_vertices": {
+      "file": "gym_b_vertices.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33
+      ],
+      "note": "per-channel AdaInt vertices",
+      "sha256": "28366e28bc3ece69659ef89c89e3af4b793374712cb3a0b87814e8e1e7410e65",
+      "bytes": 396
+    },
+    "gym_shot33": {
+      "file": "gym_shot33.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        33,
+        33,
+        33
+      ],
+      "note": "clamp(mean(bake33 a, b), 0, 1)",
+      "sha256": "ccfc4ee60911505397bf6f55cedb2964bccd5aa173bdac58ac24b07c4b6c564e",
+      "bytes": 431244
+    },
+    "gym_shot33.cube": {
+      "file": "gym_shot33.cube",
+      "dtype": "text",
+      "shape": [
+        33,
+        33,
+        33,
+        3
+      ],
+      "note": "the app's .cube format",
+      "sha256": "99c3ba42dea66c5571f56f1912225eca5ae93f316552b3bbbfa0793334118a0d",
+      "bytes": 970341
+    },
+    "synthetic_f15_cb": {
+      "file": "synthetic_f15_cb.u8",
+      "dtype": "uint8",
+      "shape": [
+        90,
+        160
+      ],
+      "note": "decoder output plane",
+      "sha256": "f626ae078a0f2f3bebd091a1f4f09908ad154373aaa0d45cd2d4a825e1a5f651",
+      "bytes": 14400
+    },
+    "synthetic_f15_cr": {
+      "file": "synthetic_f15_cr.u8",
+      "dtype": "uint8",
+      "shape": [
+        90,
+        160
+      ],
+      "note": "decoder output plane",
+      "sha256": "2272ff91a72ca7e57b604f76379db4079f8171711d5d804f7e853806e8fe8b08",
+      "bytes": 14400
+    },
+    "synthetic_f15_rgb": {
+      "file": "synthetic_f15_rgb.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        180,
+        320
+      ],
+      "note": "bt709 limited, chroma bilinear at (x/2, (y-0.5)/2), clamp",
+      "sha256": "da4f900bea6e9d01edc742bbe3e7da252e28cd464f0809eaa4051e88d7266531",
+      "bytes": 691200
+    },
+    "synthetic_f15_y": {
+      "file": "synthetic_f15_y.u8",
+      "dtype": "uint8",
+      "shape": [
+        180,
+        320
+      ],
+      "note": "decoder output plane",
+      "sha256": "855a99d728415cb3eda45ec6115f33732288cfb94e917ebbfbe78d4c79d8cf17",
+      "bytes": 57600
+    },
+    "synthetic_shots.mp4": {
+      "file": "synthetic_shots.mp4",
+      "dtype": "h264",
+      "shape": [
+        90,
+        180,
+        320
+      ],
+      "note": "testsrc2 | smptebars | mandelbrot, 1 s each, bt709 limited",
+      "sha256": "cdefb9e6a2bf2c26ebc31e99d8204f0dae65fc51c6cd3d832e415f8e670d20b7",
+      "bytes": 110489
+    },
+    "synthetic_vfr.mp4": {
+      "file": "synthetic_vfr.mp4",
+      "dtype": "h264",
+      "shape": [
+        51,
+        180,
+        320
+      ],
+      "note": "testsrc2 2 s, every 7th frame dropped, variable frame rate",
+      "sha256": "86579e010b0bf6f54b559cd9b6ffce40f264a89c06149122aa252fefc9761c0c",
+      "bytes": 74520
+    }
+  }
+}

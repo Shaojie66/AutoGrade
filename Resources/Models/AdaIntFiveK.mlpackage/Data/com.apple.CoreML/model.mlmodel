@@ -1,0 +1,1654 @@
+	Ü
+
+image*
+ÄÄ†ÄR
+lut*
+!!!†ÄR
+vertices*	
+!†Ä¢∫
+†AiLUT network, FiveK sRGB. Input: RGB in [0,1] already resized to 256x256 (bilinear, align_corners=False). Output: LUT lut[c][b][g][r] and per-channel vertices.fivek-srgb@5678851RAdaInt (Yang et al., CVPR 2022), converted by AutoGrade research/convert_coreml.py"NApache-2.0 (code). Weights trained on MIT-Adobe FiveK; usage terms unverified.¢+
+$com.github.apple.coremltools.version9.0¢4
+#com.github.apple.coremltools.sourcetorch==2.15.0¢:
+,com.github.apple.coremltools.conversion_date
+2026-11-02¢:
++com.github.apple.coremltools.source_dialectTorchScript≤√s’q
+mainÃq
+)
+image 
+
+
+
+Ä
+ÄCoreML8ïq
+CoreML8âqlutverticesö
+const'
+model_backbone_0_0_bias
+
+
+*9
+val2
+
+
+*"
+@model_path/weights/weight.bin@*-
+name%
+
+"
+model_backbone_0_0_bias√
+const;
+model_backbone_0_0_weight
+
+
+
+
+*L
+valE
+
+
+
+
+*#
+@model_path/weights/weight.bin¿*/
+name'
+
+"
+model_backbone_0_0_weightõ
+const'
+model_backbone_0_2_bias
+
+
+*:
+val3
+
+
+*#
+@model_path/weights/weight.bin¿*-
+name%
+
+"
+model_backbone_0_2_biasü
+const)
+model_backbone_0_2_weight
+
+
+*:
+val3
+
+
+*#
+@model_path/weights/weight.bin¿*/
+name'
+
+"
+model_backbone_0_2_weightõ
+const'
+model_backbone_1_0_bias
+
+
+ *:
+val3
+
+
+ *#
+@model_path/weights/weight.bin¿*-
+name%
+
+"
+model_backbone_1_0_bias√
+const;
+model_backbone_1_0_weight
+
+ 
+
+
+*L
+valE
+
+ 
+
+
+*#
+@model_path/weights/weight.binÄ*/
+name'
+
+"
+model_backbone_1_0_weightú
+const'
+model_backbone_1_2_bias
+
+
+ *;
+val4
+
+
+ *$
+@model_path/weights/weight.bin¿£*-
+name%
+
+"
+model_backbone_1_2_bias†
+const)
+model_backbone_1_2_weight
+
+
+ *;
+val4
+
+
+ *$
+@model_path/weights/weight.binÄ•*/
+name'
+
+"
+model_backbone_1_2_weightú
+const'
+model_backbone_2_0_bias
+
+
+@*;
+val4
+
+
+@*$
+@model_path/weights/weight.bin¿¶*-
+name%
+
+"
+model_backbone_2_0_biasƒ
+const;
+model_backbone_2_0_weight
+
+@
+ 
+
+*M
+valF
+
+@
+ 
+
+*$
+@model_path/weights/weight.binÄ©*/
+name'
+
+"
+model_backbone_2_0_weightú
+const'
+model_backbone_2_2_bias
+
+
+@*;
+val4
+
+
+@*$
+@model_path/weights/weight.bin¿È*-
+name%
+
+"
+model_backbone_2_2_bias†
+const)
+model_backbone_2_2_weight
+
+
+@*;
+val4
+
+
+@*$
+@model_path/weights/weight.binÄÏ*/
+name'
+
+"
+model_backbone_2_2_weightû
+const(
+model_backbone_3_0_bias
+
+Ä*<
+val5
+
+Ä*$
+@model_path/weights/weight.bin¿Ó*-
+name%
+
+"
+model_backbone_3_0_bias∆
+const<
+model_backbone_3_0_weight
+
+Ä
+@
+
+*N
+valG
+
+Ä
+@
+
+*$
+@model_path/weights/weight.binÄÛ*/
+name'
+
+"
+model_backbone_3_0_weightû
+const(
+model_backbone_3_2_bias
+
+Ä*<
+val5
+
+Ä*$
+@model_path/weights/weight.bin¿Û*-
+name%
+
+"
+model_backbone_3_2_bias¢
+const*
+model_backbone_3_2_weight
+
+Ä*<
+val5
+
+Ä*$
+@model_path/weights/weight.binÄ¯*/
+name'
+
+"
+model_backbone_3_2_weightû
+const(
+model_backbone_4_0_bias
+
+Ä*<
+val5
+
+Ä*$
+@model_path/weights/weight.bin¿¸*-
+name%
+
+"
+model_backbone_4_0_bias»
+const=
+model_backbone_4_0_weight 
+
+Ä
+Ä
+
+*O
+valH 
+
+Ä
+Ä
+
+*$
+@model_path/weights/weight.binÄÅ*/
+name'
+
+"
+model_backbone_4_0_weight∞
+const:
+*model_lut_generator_weights_generator_bias
+
+
+*)
+val"
+
+
+
+
+
+ûnÜ?øÂ˚>¡>?*@
+name8
+0
+.",
+*model_lut_generator_weights_generator_bias‘
+constC
+,model_lut_generator_weights_generator_weight
+
+
+Ä*B
+val;
+
+
+Ä*$
+@model_path/weights/weight.bin¿Å<*B
+name:
+2
+0".
+,model_lut_generator_weights_generator_weight“
+constB
+*model_lut_generator_basis_luts_bank_weight
+
+£ 
+*C
+val<
+
+£ 
+*$
+@model_path/weights/weight.binÄ≤<*@
+name8
+0
+.",
+*model_lut_generator_basis_luts_bank_weightπ
+const5
+%model_adaint_intervals_generator_bias
+
+
+`*<
+val5
+
+
+`*%
+@model_path/weights/weight.binÄÆã*;
+name3
++
+)"'
+%model_adaint_intervals_generator_biasÀ
+const>
+'model_adaint_intervals_generator_weight
+
+`
+Ä*C
+val<
+
+`
+Ä*%
+@model_path/weights/weight.bin¿±ã*=
+name5
+-
++")
+'model_adaint_intervals_generator_weightO
+const
+var_23
+*
+val
+
+
+
+
+¨≈'7*
+name
+
+	"
+op_23O
+const
+var_24
+*
+val
+
+
+
+
+ÕÃL>*
+name
+
+	"
+op_24j
+const
+input_1_pad_type_0
+*
+val
+
+
+"
+custom*(
+name 
+
+"
+input_1_pad_type_0n
+const
+input_1_pad_0
+
+
+*!
+val
+
+
+
+
+
+*#
+name
+
+"
+input_1_pad_0t
+const!
+input_1_strides_0
+
+
+*
+val
+
+
+
+
+*'
+name
+
+"
+input_1_strides_0x
+const#
+input_1_dilations_0
+
+
+*
+val
+
+
+
+
+*)
+name!
+
+"
+input_1_dilations_0a
+const
+input_1_groups_0
+*
+val
+
+
+*&
+name
+
+"
+input_1_groups_0÷
+conv 
+strides
+
+input_1_strides_0
+pad
+
+input_1_pad_0
+x	
+
+image#
+bias
+
+model_backbone_0_0_bias$
+	dilations
+
+input_1_dilations_0
+groups
+
+input_1_groups_0'
+weight
+
+model_backbone_0_0_weight"
+pad_type
+
+input_1_pad_type_0+
+input_1 
+
+
+
+Ä
+Ä*
+name
+
+"	
+input_1
+
+leaky_relu
+alpha
+
+
+var_24
+x
+	
+input_1+
+input_3 
+
+
+
+Ä
+Ä*
+name
+
+"	
+input_3—
+instance_norm&
+gamma
+
+model_backbone_0_2_weight
+epsilon
+
+
+var_23#
+beta
+
+model_backbone_0_2_bias
+x
+	
+input_3+
+input_5 
+
+
+
+Ä
+Ä*
+name
+
+"	
+input_5O
+const
+var_45
+*
+val
+
+
+
+
+¨≈'7*
+name
+
+	"
+op_45O
+const
+var_46
+*
+val
+
+
+
+
+ÕÃL>*
+name
+
+	"
+op_46j
+const
+input_7_pad_type_0
+*
+val
+
+
+"
+custom*(
+name 
+
+"
+input_7_pad_type_0n
+const
+input_7_pad_0
+
+
+*!
+val
+
+
+
+
+
+*#
+name
+
+"
+input_7_pad_0t
+const!
+input_7_strides_0
+
+
+*
+val
+
+
+
+
+*'
+name
+
+"
+input_7_strides_0x
+const#
+input_7_dilations_0
+
+
+*
+val
+
+
+
+
+*)
+name!
+
+"
+input_7_dilations_0a
+const
+input_7_groups_0
+*
+val
+
+
+*&
+name
+
+"
+input_7_groups_0÷
+conv 
+strides
+
+input_7_strides_0
+pad
+
+input_7_pad_0
+x
+	
+input_5#
+bias
+
+model_backbone_1_0_bias$
+	dilations
+
+input_7_dilations_0
+groups
+
+input_7_groups_0'
+weight
+
+model_backbone_1_0_weight"
+pad_type
+
+input_7_pad_type_0)
+input_7
+
+
+ 
+@
+@*
+name
+
+"	
+input_7}
+
+leaky_relu
+alpha
+
+
+var_46
+x
+	
+input_7)
+input_9
+
+
+ 
+@
+@*
+name
+
+"	
+input_9—
+instance_norm&
+gamma
+
+model_backbone_1_2_weight
+epsilon
+
+
+var_45#
+beta
+
+model_backbone_1_2_bias
+x
+	
+input_9*
+input_11
+
+
+ 
+@
+@*
+name
+
+"
+
+input_11O
+const
+var_67
+*
+val
+
+
+
+
+¨≈'7*
+name
+
+	"
+op_67O
+const
+var_68
+*
+val
+
+
+
+
+ÕÃL>*
+name
+
+	"
+op_68l
+const
+input_13_pad_type_0
+*
+val
+
+
+"
+custom*)
+name!
+
+"
+input_13_pad_type_0p
+const
+input_13_pad_0
+
+
+*!
+val
+
+
+
+
+
+*$
+name
+
+"
+input_13_pad_0v
+const"
+input_13_strides_0
+
+
+*
+val
+
+
+
+
+*(
+name 
+
+"
+input_13_strides_0z
+const$
+input_13_dilations_0
+
+
+*
+val
+
+
+
+
+**
+name"
+
+"
+input_13_dilations_0c
+const
+input_13_groups_0
+*
+val
+
+
+*'
+name
+
+"
+input_13_groups_0ﬁ
+conv!
+strides
+
+input_13_strides_0
+pad
+
+input_13_pad_0
+x
+
+
+input_11#
+bias
+
+model_backbone_2_0_bias%
+	dilations
+
+input_13_dilations_0
+groups
+
+input_13_groups_0'
+weight
+
+model_backbone_2_0_weight#
+pad_type
+
+input_13_pad_type_0*
+input_13
+
+
+@
+ 
+ *
+name
+
+"
+
+input_13Ä
+
+leaky_relu
+alpha
+
+
+var_68
+x
+
+
+input_13*
+input_15
+
+
+@
+ 
+ *
+name
+
+"
+
+input_15“
+instance_norm&
+gamma
+
+model_backbone_2_2_weight
+epsilon
+
+
+var_67#
+beta
+
+model_backbone_2_2_bias
+x
+
+
+input_15*
+input_17
+
+
+@
+ 
+ *
+name
+
+"
+
+input_17O
+const
+var_89
+*
+val
+
+
+
+
+¨≈'7*
+name
+
+	"
+op_89O
+const
+var_90
+*
+val
+
+
+
+
+ÕÃL>*
+name
+
+	"
+op_90l
+const
+input_19_pad_type_0
+*
+val
+
+
+"
+custom*)
+name!
+
+"
+input_19_pad_type_0p
+const
+input_19_pad_0
+
+
+*!
+val
+
+
+
+
+
+*$
+name
+
+"
+input_19_pad_0v
+const"
+input_19_strides_0
+
+
+*
+val
+
+
+
+
+*(
+name 
+
+"
+input_19_strides_0z
+const$
+input_19_dilations_0
+
+
+*
+val
+
+
+
+
+**
+name"
+
+"
+input_19_dilations_0c
+const
+input_19_groups_0
+*
+val
+
+
+*'
+name
+
+"
+input_19_groups_0ﬂ
+conv!
+strides
+
+input_19_strides_0
+pad
+
+input_19_pad_0
+x
+
+
+input_17#
+bias
+
+model_backbone_3_0_bias%
+	dilations
+
+input_19_dilations_0
+groups
+
+input_19_groups_0'
+weight
+
+model_backbone_3_0_weight#
+pad_type
+
+input_19_pad_type_0+
+input_19
+
+
+Ä
+
+*
+name
+
+"
+
+input_19Å
+
+leaky_relu
+alpha
+
+
+var_90
+x
+
+
+input_19+
+input_21
+
+
+Ä
+
+*
+name
+
+"
+
+input_21”
+instance_norm&
+gamma
+
+model_backbone_3_2_weight
+epsilon
+
+
+var_89#
+beta
+
+model_backbone_3_2_bias
+x
+
+
+input_21+
+input_23
+
+
+Ä
+
+*
+name
+
+"
+
+input_23Q
+const
+var_109
+*
+val
+
+
+
+
+ÕÃL>*
+name
+
+
+"
+op_109l
+const
+input_25_pad_type_0
+*
+val
+
+
+"
+custom*)
+name!
+
+"
+input_25_pad_type_0p
+const
+input_25_pad_0
+
+
+*!
+val
+
+
+
+
+
+*$
+name
+
+"
+input_25_pad_0v
+const"
+input_25_strides_0
+
+
+*
+val
+
+
+
+
+*(
+name 
+
+"
+input_25_strides_0z
+const$
+input_25_dilations_0
+
+
+*
+val
+
+
+
+
+**
+name"
+
+"
+input_25_dilations_0c
+const
+input_25_groups_0
+*
+val
+
+
+*'
+name
+
+"
+input_25_groups_0ﬂ
+conv!
+strides
+
+input_25_strides_0
+pad
+
+input_25_pad_0
+x
+
+
+input_23#
+bias
+
+model_backbone_4_0_bias%
+	dilations
+
+input_25_dilations_0
+groups
+
+input_25_groups_0'
+weight
+
+model_backbone_4_0_weight#
+pad_type
+
+input_25_pad_type_0+
+input_25
+
+
+Ä
+
+*
+name
+
+"
+
+input_25Ç
+
+leaky_relu
+alpha
+	
+var_109
+x
+
+
+input_25+
+input_27
+
+
+Ä
+
+*
+name
+
+"
+
+input_27}
+const&
+var_129_kernel_sizes_0
+
+
+*
+val
+
+
+
+
+*+
+name#
+
+"
+op_129_kernel_sizes_0s
+const!
+var_129_strides_0
+
+
+*
+val
+
+
+
+
+*&
+name
+
+"
+op_129_strides_0h
+const
+var_129_pad_type_0
+*
+val
+
+	"
+valid*'
+name
+
+"
+op_129_pad_type_0m
+const
+var_129_pad_0
+
+
+*!
+val
+
+
+
+
+
+    *"
+name
+
+"
+op_129_pad_0f
+const
+var_129_ceil_mode_0
+*
+val
+
+
+ *(
+name 
+
+"
+op_129_ceil_mode_0å
+const.
+&var_129_exclude_padding_from_average_0
+*
+val
+
+
+ *;
+name3
++
+)"'
+%op_129_exclude_padding_from_average_0Â
+avg_poolJ
+exclude_padding_from_average*
+(
+&var_129_exclude_padding_from_average_0
+pad
+
+var_129_pad_0"
+pad_type
+
+var_129_pad_type_0*
+kernel_sizes
+
+var_129_kernel_sizes_0 
+strides
+
+var_129_strides_0
+x
+
+
+input_27$
+	ceil_mode
+
+var_129_ceil_mode_0*
+var_129
+
+
+Ä
+
+*
+name
+
+
+"
+op_129h
+const
+var_132
+
+
+*(
+val!
+
+
+
+
+ˇˇˇˇˇˇˇˇˇ*
+name
+
+
+"
+op_132r
+reshape
+x
+	
+var_129
+shape
+	
+var_132
+input_31
+
+
+Ä*
+name
+
+"
+
+input_31œ
+linear6
+bias.
+,
+*model_lut_generator_weights_generator_bias:
+weight0
+.
+,model_lut_generator_weights_generator_weight
+x
+
+
+input_31
+input_33
+
+
+*
+name
+
+"
+
+linear_0ë
+const!
+linear_1_bias_0
+
+£ *>
+val7
+
+£ *%
+@model_path/weights/weight.binÄ≤ó*%
+name
+
+"
+linear_1_bias_0∞
+linear
+bias
+
+linear_1_bias_08
+weight.
+,
+*model_lut_generator_basis_luts_bank_weight
+x
+
+
+input_33
+luts
+
+
+£ *
+name
+
+"
+
+linear_1k
+const
+var_146
+
+
+*+
+val$
+
+
+
+
+ˇˇˇˇˇˇˇˇˇ!!!*
+name
+
+
+"
+op_146y
+reshape
+x
+
+luts
+shape
+	
+var_146+
+lut$
+"
+
+
+!
+!
+!*
+name
+
+
+"
+op_147W
+const
+var_153
+*
+val
+
+
+
+ˇˇˇˇˇˇˇˇˇ*
+name
+
+
+"
+op_153ƒ
+linear1
+bias)
+'
+%model_adaint_intervals_generator_bias5
+weight+
+)
+'model_adaint_intervals_generator_weight
+x
+
+
+input_31
+var_161
+
+
+`*
+name
+
+"
+
+linear_2i
+const
+var_163
+
+
+*)
+val"
+
+
+
+
+ˇˇˇˇˇˇˇˇˇ *
+name
+
+
+"
+op_163}
+reshape
+x
+	
+var_161
+shape
+	
+var_163'
+intervals_1
+
+
+
+ *!
+name
+
+"
+intervals_1|
+softmax
+axis
+	
+var_153
+x
+
+intervals_1%
+	intervals
+
+
+
+ *
+name
+
+"
+	intervalsc
+const
+input_exclusive_0
+*
+val
+
+
+ *'
+name
+
+"
+input_exclusive_0_
+const
+input_reverse_0
+*
+val
+
+
+ *%
+name
+
+"
+input_reverse_0µ
+cumsum
+axis
+	
+var_153"
+	exclusive
+
+input_exclusive_0
+reverse
+
+input_reverse_0
+x
+
+	intervals!
+input
+
+
+
+ *
+name
+
+	"
+inputR
+const
+const_3
+*
+val
+
+
+
+
+    *
+name
+
+"	
+const_3o
+const
+var_168_pad_0
+
+
+*#
+val
+
+
+
+
+
+     *"
+name
+
+"
+op_168_pad_0c
+const
+var_168_mode_0
+*
+val
+
+"
+
+constant*#
+name
+
+"
+op_168_mode_0¨
+pad
+pad
+
+var_168_pad_0
+x	
+
+input
+constant_val
+	
+const_3
+mode
+
+var_168_mode_0$
+vertices
+
+
+
+!*
+name
+
+
+"
+op_168"Ê
+	buildInfoÿ"
+
+
+≈"¬
+6
+!
+
+"
+coremltools-version
+	
+"
+9.0
+A
+)
+!
+"
+coremltools-component-torch
+
+
+"
+2.15.0
+E
+(
+ 
+"
+coremltools-source-dialect
+
+"
+TorchScript

@@ -1,0 +1,9 @@
+# research/.venv only — never a runtime dependency of the app.
+# Pinned: fixtures/ were generated with exactly these. coremltools 9.0 warns that
+# torch 2.15 is untested; convert_coreml.py measured CoreML vs PyTorch at 2.4e-7.
+torch==2.15.0
+numpy==2.4.6
+pillow==13.0.0
+ninja==1.13.2
+setuptools==84.2.1
+coremltools==9.0

@@ -1,0 +1,17 @@
+# generated
+/out/
+/build/
+/AutoGrade.xcodeproj/
+*.metallib
+*.air
+
+# research
+/research/.venv/
+/research/third_party/
+/research/build/
+__pycache__/
+
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+*.xcuserstate
