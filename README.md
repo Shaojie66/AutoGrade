@@ -1,5 +1,8 @@
 # AutoGrade
 
+> [!IMPORTANT]
+> 本项目仅限研究使用，不得用于谋取商业利益或报酬：模型权重使用 MIT-Adobe FiveK 数据集训练，该数据集的许可仅允许研究、非商业使用，`fixtures/` 中也含有 FiveK 图片，本项目按这一限制对待权重。详见[许可与素材](#许可与素材)及 [licenses/README.md](licenses/README.md)。
+
 AutoGrade 是 macOS 原生 AI 视频自动调色工具：按镜头分析视频，用 AdaInt（CVPR 2022）生成每镜头 3D LUT，再套用 LUT 导出视频。阶段 0–3 已完成，提供图形界面和命令行。
 
 运行时使用 Swift、Metal、CoreML 和 AVFoundation，不依赖 Python 或 ffmpeg。Python 仅用于 `research/` 中的模型转换与对照数据生成。
