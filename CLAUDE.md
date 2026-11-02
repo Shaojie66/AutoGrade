@@ -122,7 +122,7 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - AdaInt 代码 Apache-2.0（`Resources/Models/AdaInt-LICENSE.txt`）。
 - MIT-Adobe FiveK 两份许可（2026-11-02 从官网 `legal/` 核实，原文在 `licenses/`）：**只能为自己的研究使用，不得以商业利益或报酬为目的**；分发图片副本须附版权声明和许可全文；不得用 Adobe/MIT 名义背书。许可只讲图片，没讲训练出的权重；本项目**按"仅限研究、不得商用"对待权重**。
 - `fixtures/demo_*` 来自 FiveK 图片 `a4739`（属 `LicenseAdobeMIT`），所以 `licenses/FiveK-LicenseAdobeMIT.txt` 必须随仓库一起分发。
-- 远程仓库默认私有；公开、商用、分发权重前先问主人。
+- 远程仓库 `github.com/Shaojie66/AutoGrade`：2026-11-02 主人决定**公开**（在核实 FiveK 许可之后）。公开只为研究、非商用；任何商用、或把权重/FiveK 内容用于收费产品前先问主人。
 - 测试视频是即梦生成内容，整段视频不进 git，只把抽出的少量帧缩小后放进 `fixtures/`。
 
 ## 红线（必须先问主人）
