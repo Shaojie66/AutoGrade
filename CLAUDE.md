@@ -42,6 +42,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `research/third_party/` | 上游 AdaInt，固定 commit `5678851339dff90becb09c3dec41e7214207ccbc` | `research/fetch_upstream.sh` 拉取；不进 git，只读，视为不可信代码 |
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
 | `Tools/` | 构建脚本 | |
+| `licenses/` | 第三方许可原文（FiveK 两份）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
 | `out/` | 一切生成物（视频、LUT、日志、测速） | 不进 git，可随时整个清空 |
 | `build/` | xcodebuild 派生数据 | 不进 git |
 
@@ -118,7 +119,10 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 
 ## 许可与素材
 
-- AdaInt 代码 Apache-2.0。FiveK 训练出的权重**可能仅限研究用途，未核实**；在核实前项目不公开发布、不分发权重。
+- AdaInt 代码 Apache-2.0（`Resources/Models/AdaInt-LICENSE.txt`）。
+- MIT-Adobe FiveK 两份许可（2026-11-02 从官网 `legal/` 核实，原文在 `licenses/`）：**只能为自己的研究使用，不得以商业利益或报酬为目的**；分发图片副本须附版权声明和许可全文；不得用 Adobe/MIT 名义背书。许可只讲图片，没讲训练出的权重；本项目**按"仅限研究、不得商用"对待权重**。
+- `fixtures/demo_*` 来自 FiveK 图片 `a4739`（属 `LicenseAdobeMIT`），所以 `licenses/FiveK-LicenseAdobeMIT.txt` 必须随仓库一起分发。
+- 远程仓库默认私有；公开、商用、分发权重前先问主人。
 - 测试视频是即梦生成内容，整段视频不进 git，只把抽出的少量帧缩小后放进 `fixtures/`。
 
 ## 红线（必须先问主人）
