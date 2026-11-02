@@ -1,3 +1,10 @@
+// Portions of this file (ailut_eval / lower_bound_clamped / lut_apply) port the
+// CPU kernels of AdaInt, https://github.com/ImCharlesY/AdaInt at commit
+// 5678851339dff90becb09c3dec41e7214207ccbc (adaint/ailut_transform/ailut/csrc/
+// ailut_transform_cpu.cpp), Copyright (c) MMEditing Authors, licensed under
+// Apache-2.0 (Resources/Models/AdaInt-LICENSE.txt). Changed by AutoGrade: ported
+// from C++ to Metal compute kernels. Those portions remain under Apache-2.0;
+// the rest is PolyForm Noncommercial 1.0.0 (LICENSE).
 // AutoGrade kernels. Every kernel here has a golden counterpart in fixtures/
 // and an XCTest; the comments say which upstream line each one mirrors.
 //

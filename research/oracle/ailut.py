@@ -1,3 +1,10 @@
+# Portions of this file (the AiLUT model classes, ailut_reference/lut_reference
+# wrappers) are derived from AdaInt, https://github.com/ImCharlesY/AdaInt at
+# commit 5678851339dff90becb09c3dec41e7214207ccbc, Copyright (c) MMEditing
+# Authors, licensed under Apache-2.0 (Resources/Models/AdaInt-LICENSE.txt).
+# Changed by AutoGrade: inference-only rewrite without mmcv/mmedit/CUDA, a
+# pure-PyTorch AiLUT transform, and a JIT build of the upstream CPU kernel.
+# Those portions remain under Apache-2.0; the rest is PolyForm Noncommercial 1.0.0 (LICENSE).
 """AdaInt (CVPR 2022) inference without mmcv, mmedit or CUDA.
 
 Two transforms live here:

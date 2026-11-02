@@ -43,6 +43,8 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
 | `Tools/` | 构建脚本 | |
 | `licenses/` | 第三方许可原文（FiveK 两份）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
+| `docs/images/` | README 用的真实截图 | 只截 App 窗口，不含桌面或其他应用；写明来源（如界面验收的哪一张）；JPEG ≤ 300 KB |
+| `README.md` / `README_EN.md` | 中文主 README 与英文版 | 两份顶部互链并带同一 `README_SYNC` 标记；改一份必须同步另一份，改完跑 qiangshou 的 `validate_readme_pair.py` |
 | `out/` | 一切生成物（视频、LUT、日志、测速） | 不进 git，可随时整个清空 |
 | `build/` | xcodebuild 派生数据 | 不进 git |
 
@@ -119,7 +121,8 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 
 ## 许可与素材
 
-- AdaInt 代码 Apache-2.0（`Resources/Models/AdaInt-LICENSE.txt`）。
+- **本项目代码：PolyForm Noncommercial 1.0.0**（`LICENSE`，官方原文不改，首行 `Required Notice:`；2026-11-02 主人决定，与 FiveK 的非商业限制一致）。README 口径写 source-available / 源码公开、非商业免费、商用需另行授权，**不得称 Open Source**。
+- AdaInt 代码 Apache-2.0（`Resources/Models/AdaInt-LICENSE.txt`）。从 AdaInt 移植的部分（`research/oracle/ailut.py` 模型与算子封装、`Grade.metal` 的 AiLUT/LUT 算子）仍属 Apache-2.0，文件头注明来源与改动；新增移植代码照此办理。
 - MIT-Adobe FiveK 两份许可（2026-11-02 从官网 `legal/` 核实，原文在 `licenses/`）：**只能为自己的研究使用，不得以商业利益或报酬为目的**；分发图片副本须附版权声明和许可全文；不得用 Adobe/MIT 名义背书。许可只讲图片，没讲训练出的权重；本项目**按"仅限研究、不得商用"对待权重**。
 - `fixtures/demo_*` 来自 FiveK 图片 `a4739`（属 `LicenseAdobeMIT`），所以 `licenses/FiveK-LicenseAdobeMIT.txt` 必须随仓库一起分发。
 - 远程仓库 `github.com/Shaojie66/AutoGrade`：2026-11-02 主人决定**公开**（在核实 FiveK 许可之后）。公开只为研究、非商用；任何商用、或把权重/FiveK 内容用于收费产品前先问主人。
