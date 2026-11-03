@@ -113,6 +113,8 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
   - **Fuji Provia 100F**（`Color/Fuji/Fuji Provia 100F.png`）：−1 / −11 / +11 —— 温和备选
   - 不适合日落：Portra 400（+19，像 FiveK 一样提亮）、Ektar 100（变淡）、Kodachrome 64（偏洋红）、LateSunset / TealOrange（风格化过重）。对照：FiveK 为 +16 / +7 / +31。
 - 训练目标是固定 LUT 时，模型最多逼近"直接套 LUT"（主人已知并接受）。
+- **velvia50_v1**（2026-11-03，`research/runs/velvia50_v1/`，权重不进 git）：FiveK 官网 DNG 子集 800 训练 / 200 测试，从 FiveK 权重微调 45,000 步，MPS 用时 92 分钟（开始时负载 44、结束时 4）。200 张测试图上模型 vs Velvia 目标：**PSNR 50.8 dB、平均误差 0.57 级、p99 2.4 级**（起点 FiveK 权重 18.9 dB / 26.7 级）。主人视频帧：伊斯坦布尔日落平均 0.5–0.6 级，天空亮度跟随 Velvia（170.3 → 目标 163.0 / 模型 163.4，FiveK 181.7）；车窗街景 p99 12.5 级（过曝天空处）。CoreML vs PyTorch 3.0e-7。验收第 1–5 条通过。
+- **ektachrome100vs_v1**（2026-11-03，同一数据与超参）：用时 87 分钟（开始负载 10.7）。200 张测试图：**PSNR 46.5 dB、平均 0.90 级、p99 4.4 级**（起点 19.3 dB / 25.2 级）。伊斯坦布尔日落平均 0.6–0.9 级，天空 170.3 → 目标 163.2 / 模型 162.4；车窗街景 p99 25.7 级（过曝天空处，两款里最差）。CoreML vs PyTorch 2.4e-7。验收第 6 条通过。比 Velvia 难学一些（验证曲线在 45–48 dB 间波动）。
 
 ## 界面实操验收的安全规则（2026-11-02 事故后定）
 
