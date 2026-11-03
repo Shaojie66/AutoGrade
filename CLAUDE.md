@@ -40,6 +40,10 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `Resources/Models/` | 转好的 `.mlpackage`、上游 LICENSE | 只能由 `research/convert_coreml.py` 生成 |
 | `research/` | Python：独立 `.venv`、转换、对照、训练 | 唯一允许 Python 的地方；运行一律 `python -I` |
 | `research/third_party/` | 上游 AdaInt，固定 commit `5678851339dff90becb09c3dec41e7214207ccbc` | `research/fetch_upstream.sh` 拉取；不进 git，只读，视为不可信代码 |
+| `research/third_party/rawtherapee-film/` | RawTherapee Film Simulation Collection（2015-09-20，HaldCLUT PNG；Pat David、Pavlov Dmitry、Michael Ezra，**CC BY-SA 4.0**） | 从官方 `rawtherapee.com/shared/HaldCLUT.zip` 下载；不进 git，只读。用它生成的训练数据和权重要按 CC BY-SA 4.0 署名并相同方式共享，与 FiveK 的仅限研究同时成立（2026-11-02 主人知情后决定使用） |
+| `research/train/` | 风格训练代码：HaldCLUT 读取、数据集与增强、训练、评估 | 进 git；运行一律 `python -I` |
+| `research/data/` | 训练输入（FiveK 480p sRGB 等） | 不进 git；只读使用；记录来源与清单 sha256 |
+| `research/runs/<run>/` | 每次训练的配置、日志、checkpoint、报告、转换出的 `.mlpackage` | 不进 git；**训练权重不提交、不推送**（同时受 FiveK 仅限研究与 CC BY-SA 4.0 约束，发布方式待主人决定）；可随时清空重跑 |
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
 | `Tools/` | 构建脚本 | |
 | `licenses/` | 第三方许可原文（FiveK 两份）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
@@ -92,6 +96,7 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - 视频可能是可变帧率：ffmpeg 解码默认会补重复帧（193 帧变 482 帧）。research 脚本解码必须 `-fps_mode passthrough`；Swift 侧以 AVAssetReader 实际读出的样本为准。
 - 后台运行的 ffmpeg 要加 `-nostdin`。
 - 颜色直方图切镜阈值 0.5 在低饱和（水墨）画面会漏切；当前默认 0.25。
+- 反过来，单镜头里大块物体经过也会被误切（2026-11-02 主人的车窗街景 `sd1793455645_2.mov`：公交车进出画面，0.25 阈值切出 14 段，其中 10 段只有 1–2 帧；实际是 1 个连续镜头，`--cut 3` 即不切）。单帧镜头会让 LUT 闪一下；待改进：最短镜头长度或切点前后多帧确认。
 - `codex exec` 在后台运行必须 `< /dev/null`，否则一直等 stdin（2026-11-02 白等 20 分钟）。
 - Codex 的 `workspace-write` 沙箱里 `screencapture` 失败（`could not create image from display`）；界面实操验收需要主人逐次批准 `danger-full-access`。
 - 预览显示 vs QuickTime（gym 第 101 帧画面中心 20%，整屏截图，均为 Display P3）：CAMetalLayer+`itur_709` 与 BGRA 送显示层都是 (128.3, 98.7, 61.3)；改为 420v 同标签同色彩空间后 **(126.0, 93.9, 52.0)**，QuickTime (126.4, 93.7, 52.2)，差 ≤0.4 级（2026-11-02）。主人定以 QuickTime 为准 → 架构原则 5。

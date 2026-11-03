@@ -147,6 +147,17 @@ class LUTGenerator(nn.Module):
         luts = self.basis_luts_bank(weights)
         return weights, luts.view(x.shape[0], -1, *((self.n_vertices,) * self.n_colors))
 
+    def regularizations(self, smoothness, monotonicity):
+        """Upstream AiLUT regularizers on the basis LUTs (adaint/model.py)."""
+        basis = self.basis_luts_bank.weight.t().view(self.basis_luts_bank.weight.shape[1], self.n_colors,
+                                                     *((self.n_vertices,) * self.n_colors))
+        tv, mn = 0, 0
+        for i in range(2, basis.ndimension()):
+            diff = torch.diff(basis.flip(i), dim=i)
+            tv = tv + torch.square(diff).sum(0).mean()
+            mn = mn + F.relu(diff).sum(0).mean()
+        return smoothness * tv, monotonicity * mn
+
 
 class AdaInt(nn.Module):
     def __init__(self, n_colors, n_vertices, n_feats):
@@ -187,10 +198,13 @@ CHECKPOINTS = {
 }
 
 
-def load_model(name="fivek", device="cpu"):
+def load_model(name="fivek", device="cpu", checkpoint=None):
+    """Upstream pretrained weights by `name`, or a fine-tuned `checkpoint`
+    (research/runs/<run>/*.pth, same architecture as `name`)."""
     fname, kw = CHECKPOINTS[name]
     model = AiLUT(**kw)
-    # weights_only: the checkpoint comes from a third-party repo; no pickle code runs.
-    ck = torch.load(UPSTREAM / "pretrained" / fname, map_location="cpu", weights_only=True)
+    path = Path(checkpoint) if checkpoint else UPSTREAM / "pretrained" / fname
+    # weights_only: never run pickled code, whether upstream or ours.
+    ck = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(ck["state_dict"], strict=True)
     return model.eval().to(device)

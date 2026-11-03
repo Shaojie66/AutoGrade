@@ -8,8 +8,12 @@ held to the oracle separately (CLAUDE.md, "对照先于功能").
 After conversion the package is checked against PyTorch on the upstream demo
 image and on random inputs, fp32 on cpuAndGPU, tolerance 1e-4.
 
-Usage: research/.venv/bin/python -I research/convert_coreml.py
+Usage: research/.venv/bin/python -I research/convert_coreml.py [--checkpoint RUN/stepN.pth --out RUN/Name.mlpackage]
+Without arguments it converts the upstream FiveK weights into Resources/Models/
+(what the app ships). Fine-tuned runs must write into research/runs/ instead:
+trained weights are not committed (CLAUDE.md, research/runs).
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -43,7 +47,14 @@ class Network(nn.Module):
 
 
 def main():
-    net = Network(load_model("fivek")).eval()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--checkpoint", type=Path, default=None, help="fine-tuned .pth (research/runs/...)")
+    ap.add_argument("--out", type=Path, default=OUT)
+    args = ap.parse_args()
+    if args.checkpoint and (ROOT / "Resources") in args.out.resolve().parents:
+        sys.exit("fine-tuned weights must not be written into Resources/ (not shipped, not committed)")
+    out = args.out
+    net = Network(load_model("fivek", checkpoint=args.checkpoint)).eval()
     example = torch.rand(1, 3, 256, 256)
     traced = torch.jit.trace(net, example)
     mlmodel = ct.convert(
@@ -56,16 +67,17 @@ def main():
         minimum_deployment_target=ct.target.macOS15,
     )
     mlmodel.author = "AdaInt (Yang et al., CVPR 2022), converted by AutoGrade research/convert_coreml.py"
-    mlmodel.license = "Apache-2.0 (code). Weights trained on MIT-Adobe FiveK; usage terms unverified."
+    mlmodel.license = ("AdaInt code Apache-2.0. Weights trained on MIT-Adobe FiveK: research use only, non-commercial"
+                       + ("; fine-tuned toward a RawTherapee Film Simulation look (CC BY-SA 4.0)." if args.checkpoint else "."))
     mlmodel.short_description = ("AiLUT network, FiveK sRGB. Input: RGB in [0,1] already resized to 256x256 "
                                  "(bilinear, align_corners=False). Output: LUT lut[c][b][g][r] and per-channel vertices.")
-    mlmodel.version = "fivek-srgb@5678851"
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    mlmodel.save(str(OUT))
-    print(f"wrote {OUT.relative_to(ROOT)}")
+    mlmodel.version = f"finetune:{args.checkpoint.parent.name}/{args.checkpoint.name}" if args.checkpoint else "fivek-srgb@5678851"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    mlmodel.save(str(out))
+    print(f"wrote {out}")
 
     # ---- verify the saved package, not the in-memory object
-    reloaded = ct.models.MLModel(str(OUT), compute_units=ct.ComputeUnit.CPU_AND_GPU)
+    reloaded = ct.models.MLModel(str(out), compute_units=ct.ComputeUnit.CPU_AND_GPU)
     demo = resize256(load_rgb(UPSTREAM / "resources" / "a4739.jpg"))
     worst = {"lut": 0.0, "vertices": 0.0}
     for x in [demo] + [torch.rand(1, 3, 256, 256) for _ in range(4)]:

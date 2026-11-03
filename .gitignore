@@ -8,6 +8,8 @@
 # research
 /research/.venv/
 /research/third_party/
+/research/data/
+/research/runs/
 /research/build/
 __pycache__/
 
