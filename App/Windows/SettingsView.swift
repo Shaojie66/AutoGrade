@@ -1,3 +1,5 @@
+import AppKit
+import AutoGradeCore
 import SwiftUI
 
 struct SettingsView: View {
@@ -10,8 +12,15 @@ struct SettingsView: View {
                 Text(L(S.english)).tag(LanguageSetting.english)
                 Text(L(S.chinese)).tag(LanguageSetting.simplifiedChinese)
             }
+            Section(L(S.styles)) {
+                Button(L(S.showStylesFolder)) {
+                    NSWorkspace.shared.activateFileViewerSelecting([StyleCatalog.defaultDirectory])
+                }
+                .disabled(!FileManager.default.fileExists(atPath: StyleCatalog.defaultDirectory.path))
+                Text(L(S.stylesNote)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: 420)
     }
 }

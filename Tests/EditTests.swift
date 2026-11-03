@@ -11,7 +11,7 @@ final class EditTests: XCTestCase {
     let synthetic = Fixtures.url("synthetic_shots.mp4")
 
     override func setUpWithError() throws {
-        engine = try AutoGrader()
+        engine = try AutoGrader(stylesDirectory: nil)
     }
 
     private func analyze(_ url: URL, cut: Float = Fixtures.manifest.cut_threshold) throws -> Analysis {
@@ -54,7 +54,7 @@ final class EditTests: XCTestCase {
     func testRemoveCutEqualsAnalysingTheMergedShot() throws {
         let three = try analyze(synthetic)
         XCTAssertEqual(three.shots.count, 3)
-        let merged = try engine.removeCut(three, beforeShot: 1)
+        let merged = try engine.removeCut(three, beforeShot: 1, source: synthetic)
         XCTAssertEqual(merged.shots, [Shot(first: 0, last: 59), Shot(first: 60, last: 89)])
 
         // Reference: no cuts at all (L1 distance never exceeds 2), then one cut at 60.
@@ -69,7 +69,7 @@ final class EditTests: XCTestCase {
 
     func testAddCutEqualsFreshAnalysisAndRoundTrips() throws {
         let three = try analyze(synthetic)
-        let restored = try engine.addCut(try engine.removeCut(three, beforeShot: 1), source: synthetic, atFrame: 30)
+        let restored = try engine.addCut(try engine.removeCut(three, beforeShot: 1, source: synthetic), source: synthetic, atFrame: 30)
         XCTAssertEqual(restored.shots, three.shots)
         for k in 0..<3 {
             let err = maxAbsDifference(restored.luts[k].floats(), three.luts[k].floats())

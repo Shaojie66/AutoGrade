@@ -16,6 +16,7 @@ struct Summary: Sendable {
     let info: VideoInfo
     let shots: [Shot]
     let strengths: [Float]
+    let styles: [String]
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -53,20 +54,27 @@ actor Engine {
     private var nextSlot = 0
     /// Cancellation must reach a running job, which holds the actor, so it lives outside it.
     nonisolated let control = CancelControl()
+    /// Fixed for the engine's lifetime: styles are found once, at launch.
+    nonisolated let styles: [Style]
+    nonisolated let styleWarnings: [String]
 
     init() throws {
         core = try AutoGrader()
+        styles = core.catalog.styles
+        styleWarnings = core.catalog.warnings
     }
 
     // MARK: analysis and edits
 
-    func open(_ url: URL, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+    func open(_ url: URL, style: String, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
         let token = control.begin()
         defer { control.end(token) }
         // Probe the format first so an unsupported file fails before any work.
         let probe = try VideoReader(url: url, device: core.metal.device)
         let expected = max(1.0, probe.info.duration.seconds * Double(probe.info.nominalFrameRate))
-        let result = try core.analyze(url, lutSize: 65, cancel: token) { i in progress(min(1, Double(i + 1) / expected)) }
+        let result = try core.analyze(url, lutSize: 65, style: style, cancel: token) { i in
+            progress(min(1, Double(i + 1) / expected))
+        }
         source = url
         analysis = result
         strengths = Array(repeating: 1, count: result.shots.count)
@@ -92,10 +100,30 @@ actor Engine {
         return summary()
     }
 
-    func removeCut(beforeShot k: Int) throws -> Summary {
-        guard let a = analysis, k >= 1, k < a.shots.count else { return summary() }
-        analysis = try core.removeCut(a, beforeShot: k)
-        strengths.remove(at: k)                     // the merged shot keeps the earlier one's strength
+    /// Merging shots of different styles re-analyses the later one (CLAUDE.md, 风格).
+    func removeCut(beforeShot k: Int, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis, k >= 1, k < a.shots.count else { return summary() }
+        let token = control.begin()
+        defer { control.end(token) }
+        let later = a.shots[k]
+        analysis = try core.removeCut(a, beforeShot: k, source: source, cancel: token) { i in
+            progress(Double(i - later.first + 1) / Double(later.frames))
+        }
+        strengths.remove(at: k)                     // the merged shot keeps the earlier one's strength (and style)
+        try rebuildFinals()
+        return summary()
+    }
+
+    /// Grade shots `range` in `style`; only those shots are decoded, cuts and strengths stay.
+    func setStyle(_ style: String, shots range: ClosedRange<Int>,
+                  progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis, range.upperBound < a.shots.count else { return try noVideo() }
+        let token = control.begin()
+        defer { control.end(token) }
+        let first = a.shots[range.lowerBound].first, frames = a.shots[range.upperBound].last - first + 1
+        analysis = try core.restyle(a, source: source, shots: range, to: style, cancel: token) { i in
+            progress(Double(i - first + 1) / Double(frames))
+        }
         try rebuildFinals()
         return summary()
     }
@@ -119,7 +147,7 @@ actor Engine {
             return max(0, (stop - a.frameTimes[shot.first]).seconds)
         }
         let duration = max(end.seconds, 1e-6)
-        return Summary(info: a.info, shots: a.shots, strengths: strengths, shotSeconds: seconds,
+        return Summary(info: a.info, shots: a.shots, strengths: strengths, styles: a.styles, shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
 

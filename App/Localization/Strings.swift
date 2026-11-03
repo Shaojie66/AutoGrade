@@ -38,6 +38,23 @@ enum S {
     }
     static let strength = Copy(en: "Strength", zh: "强度")
 
+    // styles
+    static let style = Copy(en: "Style", zh: "风格")
+    static let styleFiveK = Copy(en: "FiveK (natural)", zh: "FiveK（自然）")
+    static let applyToAllShots = Copy(en: "Apply to All Shots", zh: "应用到所有镜头")
+    static let restyling = Copy(en: "Applying style", zh: "正在应用风格")
+    static let styleFailed = Copy(en: "Couldn’t apply the style", zh: "无法应用风格")
+    static let styleMissingTitle = Copy(en: "Style not installed", zh: "风格未安装")
+    static func styleMissingBody(_ id: String) -> Copy {
+        Copy(en: "The default style “\(id)” is no longer on this Mac. Videos open in FiveK instead.",
+             zh: "默认风格“\(id)”已不在这台 Mac 上，视频将改用 FiveK 打开。")
+    }
+    static let styles = Copy(en: "Styles", zh: "风格")
+    static let showStylesFolder = Copy(en: "Show Styles Folder", zh: "在访达中显示风格文件夹")
+    static let stylesNote = Copy(
+        en: "Film styles are installed on this Mac only and are not distributed. FiveK weights: research use only, non-commercial; film styles are also under CC BY-SA 4.0.",
+        zh: "胶片风格只安装在这台 Mac 上，不对外分发。FiveK 权重仅限研究、不得商用；胶片风格另受 CC BY-SA 4.0 约束。")
+
     // preview
     static let compareSplit = Copy(en: "Split", zh: "分屏")
     static let compareOriginal = Copy(en: "Original", zh: "原片")

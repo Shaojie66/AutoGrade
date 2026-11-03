@@ -1,7 +1,7 @@
 import AutoGradeCore
 import SwiftUI
 
-/// Left column: one row per shot — graded thumbnail, range, duration, strength.
+/// Left column: one row per shot — graded thumbnail, range, duration, strength, style.
 struct ShotList: View {
     @Bindable var project: Project
 
@@ -52,6 +52,14 @@ private struct ShotRow: View {
                     .font(.caption.monospacedDigit())
                     .frame(width: 36, alignment: .trailing)
             }
+            if project.availableStyles.count > 1 {
+                Picker(L(S.style), selection: style) {
+                    ForEach(project.availableStyles) { s in Text(project.styleName(s.id)).tag(s.id) }
+                }
+                .font(.caption)
+                .controlSize(.small)
+                .disabled(!project.canEdit)
+            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
@@ -61,6 +69,11 @@ private struct ShotRow: View {
     private var strength: Binding<Double> {
         Binding(get: { Double(project.strengths[safe: index] ?? 1) },
                 set: { project.setStrength(Float($0), shot: index) })
+    }
+
+    private var style: Binding<String> {
+        Binding(get: { project.styles[safe: index] ?? StyleCatalog.builtinID },
+                set: { project.setStyle($0, shot: index) })
     }
 
     @ViewBuilder private var thumbnail: some View {

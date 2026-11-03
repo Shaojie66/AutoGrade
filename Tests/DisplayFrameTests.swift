@@ -7,7 +7,7 @@ import XCTest
 /// '420v' BT.709 frame carrying the decoder's own attachments (CLAUDE.md 架构原则 5).
 final class DisplayFrameTests: XCTestCase {
     func testDisplayFrameIsDecoderShapedAndCarriesTheRightPixels() throws {
-        let engine = try AutoGrader()
+        let engine = try AutoGrader(stylesDirectory: nil)
         let synthetic = Fixtures.url("synthetic_shots.mp4")
         let analysis = try engine.analyze(synthetic, lutSize: 33, cutThreshold: Fixtures.manifest.cut_threshold)
         let w = analysis.info.width, h = analysis.info.height

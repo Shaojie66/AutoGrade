@@ -8,7 +8,7 @@ import XCTest
 /// colour conversion inside the encoder shows up as a per-channel mean bias.
 final class ExportRoundTripTests: XCTestCase {
     func testExportDecodesBackWithoutColourShift() throws {
-        let engine = try AutoGrader()
+        let engine = try AutoGrader(stylesDirectory: nil)
         let synthetic = Fixtures.url("synthetic_shots.mp4")
         let analysis = try engine.analyze(synthetic, lutSize: 33, cutThreshold: Fixtures.manifest.cut_threshold)
         let probe: Set = [15, 45, 75]

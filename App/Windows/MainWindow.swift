@@ -14,6 +14,21 @@ struct MainWindow: View {
                     Button { project.openPanel() } label: { Label(L(S.open), systemImage: "folder") }
                     Button { project.reanalyze() } label: { Label(L(S.reanalyze), systemImage: "arrow.clockwise") }
                         .disabled(!project.canEdit)
+                    if project.availableStyles.count > 1 {
+                        Menu {
+                            Section(L(S.applyToAllShots)) {
+                                ForEach(project.availableStyles) { s in
+                                    Toggle(project.styleName(s.id), isOn: Binding(
+                                        get: { project.defaultStyle == s.id },
+                                        set: { if $0 { project.setStyleForAll(s.id) } }))
+                                }
+                            }
+                        } label: {
+                            Label(L(S.style), systemImage: "camera.filters")
+                        }
+                        .disabled(project.busy != nil || project.exportProgress != nil)
+                        .accessibilityLabel(L(S.style))
+                    }
                     Button { project.beginExport() } label: { Label(L(S.export), systemImage: "square.and.arrow.up") }
                         .disabled(!project.canEdit)
                 }

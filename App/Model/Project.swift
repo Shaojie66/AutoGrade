@@ -30,7 +30,15 @@ final class Project {
     private(set) var source: URL?
     private(set) var summary: Summary?
     private(set) var strengths: [Float] = []
+    private(set) var styles: [String] = []       // per shot
     private(set) var thumbnails: [Int: NSImage] = [:]
+
+    // styles
+    /// Every style this Mac has (FiveK first), fixed at launch.
+    let availableStyles: [Style]
+    /// The style new videos open in, and what "apply to all shots" last chose.
+    private(set) var defaultStyle: String
+    static let defaultStyleKey = "defaultStyle"
 
     // view state
     private(set) var playhead = 0
@@ -56,12 +64,26 @@ final class Project {
     private var playTask: Task<Void, Never>?
 
     init() {
+        var missing: String?
         do {
-            engine = try Engine()
+            let engine = try Engine()
+            self.engine = engine
+            availableStyles = engine.styles
+            let stored = UserDefaults.standard.string(forKey: Self.defaultStyleKey) ?? StyleCatalog.builtinID
+            if engine.styles.contains(where: { $0.id == stored }) {
+                defaultStyle = stored
+            } else {
+                defaultStyle = StyleCatalog.builtinID
+                missing = stored
+            }
+            for warning in engine.styleWarnings { print("AutoGrade styles: \(warning)") }
         } catch {
             engine = nil
+            availableStyles = []
+            defaultStyle = StyleCatalog.builtinID
             phase = .failed("\(error)")
         }
+        if let missing { alert = Alert(title: S.styleMissingTitle, message: L(S.styleMissingBody(missing))) }
     }
 
     var canEdit: Bool { phase == .ready && busy == nil && exportProgress == nil }
@@ -83,16 +105,21 @@ final class Project {
         source = url
         summary = nil
         strengths = []
+        styles = []
         thumbnails = [:]
         display = nil
         playhead = 0
         phase = .analyzing(0)
+        let style = defaultStyle
         Task {
             do {
-                let s = try await engine.open(url) { p in Task { @MainActor in self.updateAnalysisProgress(p, for: url) } }
+                let s = try await engine.open(url, style: style) { p in
+                    Task { @MainActor in self.updateAnalysisProgress(p, for: url) }
+                }
                 guard source == url else { return }   // another file was opened meanwhile
                 summary = s
                 strengths = s.strengths
+                styles = s.styles
                 phase = .ready
                 showFrame(0)
                 refreshThumbnails()
@@ -226,14 +253,68 @@ final class Project {
     func removeCut() {
         guard let engine, canRemoveCut, let k = currentShot else { return }
         stopPlaying()
+        busy = S.editing                             // re-analyses when the two shots' styles differ
+        busyProgress = 0
         Task {
-            do { apply(try await engine.removeCut(beforeShot: k)) } catch { alert = Alert(title: S.openFailed, message: "\(error)") }
+            do {
+                apply(try await engine.removeCut(beforeShot: k) { p in Task { @MainActor in self.busyProgress = p } })
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.openFailed, message: "\(error)")
+            }
+            busy = nil
+        }
+    }
+
+    // MARK: styles
+
+    func styleName(_ id: String) -> String {
+        guard let style = availableStyles.first(where: { $0.id == id }) else { return id }
+        return style.isBuiltin ? L(S.styleFiveK) : L(Copy(en: style.nameEN, zh: style.nameZH))
+    }
+
+    /// Grade one shot in another style: re-analyses that shot only.
+    func setStyle(_ id: String, shot k: Int) {
+        guard canEdit, k < styles.count, styles[k] != id else { return }
+        restyle(id, shots: k...k)
+    }
+
+    /// Grade every shot in `id` (cuts stay), and open future videos in it.
+    /// The default only changes once the shots are restyled: a cancelled
+    /// restyle leaves both the shots and the default as they were.
+    func setStyleForAll(_ id: String) {
+        guard summary != nil else { return rememberDefault(id) }
+        guard canEdit else { return }
+        guard styles.contains(where: { $0 != id }) else { return rememberDefault(id) }
+        restyle(id, shots: 0...(styles.count - 1)) { self.rememberDefault(id) }
+    }
+
+    private func rememberDefault(_ id: String) {
+        defaultStyle = id
+        UserDefaults.standard.set(id, forKey: Self.defaultStyleKey)
+    }
+
+    private func restyle(_ id: String, shots range: ClosedRange<Int>, onSuccess: (() -> Void)? = nil) {
+        guard let engine else { return }
+        stopPlaying()
+        busy = S.restyling
+        busyProgress = 0
+        Task {
+            do {
+                apply(try await engine.setStyle(id, shots: range) { p in Task { @MainActor in self.busyProgress = p } })
+                onSuccess?()
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.styleFailed, message: "\(error)")
+            }
+            busy = nil
         }
     }
 
     private func apply(_ s: Summary) {
         summary = s
         strengths = s.strengths
+        styles = s.styles
         thumbnails = [:]
         showFrame(playhead)
         refreshThumbnails()

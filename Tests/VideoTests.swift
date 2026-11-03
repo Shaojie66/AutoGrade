@@ -64,7 +64,7 @@ final class VideoTests: XCTestCase {
     }
 
     func testTwoPassPipelineOnSyntheticShots() throws {
-        let engine = try AutoGrader()
+        let engine = try AutoGrader(stylesDirectory: nil)
         let analysis = try engine.analyze(Fixtures.url("synthetic_shots.mp4"), lutSize: 33,
                                           cutThreshold: Fixtures.manifest.cut_threshold)
         let shots = analysis.shots.map { [$0.first, $0.last] }

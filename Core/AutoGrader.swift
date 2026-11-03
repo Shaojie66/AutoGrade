@@ -26,7 +26,9 @@ public struct StageTimes: Sendable {
 /// Result of pass 1, and the state cut editing works on. Preview and export
 /// both read this (CLAUDE.md 架构原则 3). `sums` are the unclamped per-shot
 /// sums of baked LUTs; `luts` are their clamped means (CLAUDE.md, 切点编辑).
-/// Edits return a new Analysis and never write into an existing buffer.
+/// `styles` is each shot's style id: a sum only ever holds one style's frames
+/// (CLAUDE.md, 风格). Edits return a new Analysis and never write into an
+/// existing buffer.
 public struct Analysis {
     public let info: VideoInfo
     public let lutSize: Int
@@ -34,6 +36,7 @@ public struct Analysis {
     public let shots: [Shot]
     public let sums: [LUT3D]
     public let luts: [LUT3D]
+    public let styles: [String]
     public let times: StageTimes
     public let warnings: [String]
 
@@ -75,18 +78,24 @@ public final class PreviewTargets {
 public final class AutoGrader {
     public let metal: MetalContext
     public let kernels: GradeKernels
-    public let grader: Grader
+    public let catalog: StyleCatalog
 
-    public init(computeUnits: MLComputeUnits = .cpuAndGPU) throws {
+    /// `stylesDirectory` nil grades with FiveK only (tests); `extraStyles` are
+    /// injected predictors (StyleTests).
+    public init(computeUnits: MLComputeUnits = .cpuAndGPU, stylesDirectory: URL? = StyleCatalog.defaultDirectory,
+                extraStyles: [(Style, LUTPredictor)] = []) throws {
         metal = try MetalContext()
         kernels = GradeKernels(metal: metal)
-        grader = try Grader(kernels: kernels, computeUnits: computeUnits)
+        catalog = try StyleCatalog(kernels: kernels, directory: stylesDirectory, computeUnits: computeUnits,
+                                   extra: extraStyles)
     }
 
     // MARK: pass 1
 
     public func analyze(_ url: URL, lutSize: Int = 65, cutThreshold: Float = ShotDetector.defaultThreshold,
+                        style: String = StyleCatalog.builtinID,
                         cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil) throws -> Analysis {
+        let predictor = try catalog.predictor(style)
         let reader = try VideoReader(url: url, device: metal.device)
         var detector = ShotDetector(threshold: cutThreshold)
         var times = StageTimes()
@@ -106,7 +115,8 @@ public final class AutoGrader {
             if cancel?.isCancelled == true { throw Cancelled() }
             times.decode += clock.lap()
             frameTimes.append(frame.presentationTime)
-            let (baked, thumb) = try analyzeFrame(frame, lutSize: lutSize, thumbnail: true, times: &times, clock: &clock)
+            let (baked, thumb) = try analyzeFrame(frame, lutSize: lutSize, predictor: predictor, thumbnail: true,
+                                                  times: &times, clock: &clock)
             if detector.isCut(thumbnail: thumb!) {
                 closeShot(endingBefore: frame.index)
                 acc = try kernels.makeLUT(size: lutSize)
@@ -123,12 +133,13 @@ public final class AutoGrader {
         closeShot(endingBefore: times.frames)
         let luts = try zip(sums, counts).map { try kernels.mean($0, frames: $1) }
         return Analysis(info: reader.info, lutSize: lutSize, frameTimes: frameTimes, shots: shots, sums: sums,
-                        luts: luts, times: times, warnings: reader.warnings)
+                        luts: luts, styles: Array(repeating: style, count: shots.count), times: times,
+                        warnings: reader.warnings)
     }
 
     /// One frame of pass 1: its AiLUT baked to lutSize^3, and (optionally) the
     /// shot-detection thumbnail.
-    private func analyzeFrame(_ frame: DecodedFrame, lutSize: Int, thumbnail: Bool,
+    private func analyzeFrame(_ frame: DecodedFrame, lutSize: Int, predictor: LUTPredictor, thumbnail: Bool,
                               times: inout StageTimes, clock: inout Clock) throws -> (LUT3D, [Float]?) {
         let rgb = try kernels.yuvToRGB(luma: frame.luma, chroma: frame.chroma)
         times.convert += clock.lap()
@@ -137,60 +148,91 @@ public final class AutoGrader {
             ? try kernels.resize(rgb, width: ShotDetector.thumbnailWidth, height: ShotDetector.thumbnailHeight).floats()
             : nil
         times.resize += clock.lap()
-        let ai = try grader.predict(small)
+        let ai = try predictor.predict(small)
         times.predict += clock.lap()
         let baked = try kernels.bake(ai, size: lutSize)
         times.bake += clock.lap()
         return (baked, thumb)
     }
 
-    // MARK: cut editing
+    // MARK: cut editing and styles
 
     /// Remove the cut in front of shot `index` (index >= 1): it merges into the
-    /// shot before it. Exact — the sums add — so nothing is re-analysed.
-    public func removeCut(_ analysis: Analysis, beforeShot index: Int) throws -> Analysis {
+    /// shot before it and takes that shot's style. Same style: exact, the sums
+    /// add and nothing is decoded. Different styles: the later part is first
+    /// re-analysed in the earlier shot's style from `source` (CLAUDE.md, 风格).
+    public func removeCut(_ analysis: Analysis, beforeShot index: Int, source url: URL,
+                          cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil) throws -> Analysis {
         precondition(index >= 1 && index < analysis.shots.count)
         let a = analysis.shots[index - 1], b = analysis.shots[index]
+        let style = analysis.styles[index - 1]
+        let later = analysis.styles[index] == style
+            ? analysis.sums[index]
+            : try accumulate(analysis, source: url, parts: [(b, style)], cancel: cancel, progress: progress)[0]
         let sum = try kernels.makeLUT(size: analysis.lutSize)
         try kernels.accumulate(sum, analysis.sums[index - 1])
-        try kernels.accumulate(sum, analysis.sums[index])
+        try kernels.accumulate(sum, later)
         let merged = Shot(first: a.first, last: b.last)
-        return try replacing(analysis, shots: (index - 1)...index, with: [(merged, sum)])
+        return try replacing(analysis, shots: (index - 1)...index, with: [(merged, sum, style)])
     }
 
     /// Add a cut so that `frame` starts a new shot. Only the shot being split
-    /// is decoded again; both halves' sums come out of that one pass.
+    /// is decoded again; both halves' sums come out of that one pass, and both
+    /// keep the shot's style.
     public func addCut(_ analysis: Analysis, source url: URL, atFrame frame: Int,
                        cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil) throws -> Analysis {
         let k = analysis.shotIndex(forFrame: frame)
-        let shot = analysis.shots[k]
+        let shot = analysis.shots[k], style = analysis.styles[k]
         precondition(frame > shot.first && frame <= shot.last, "frame \(frame) is already a shot start")
-        let reader = try VideoReader(url: url, device: metal.device,
-                                     timeRange: analysis.timeRange(first: shot.first, last: shot.last),
+        let halves = [Shot(first: shot.first, last: frame - 1), Shot(first: frame, last: shot.last)]
+        let sums = try accumulate(analysis, source: url, parts: halves.map { ($0, style) }, cancel: cancel, progress: progress)
+        return try replacing(analysis, shots: k...k, with: [(halves[0], sums[0], style), (halves[1], sums[1], style)])
+    }
+
+    /// Grade shots `range` in `style` instead: those shots are decoded once
+    /// (one read across the whole range), cuts stay where they are.
+    public func restyle(_ analysis: Analysis, source url: URL, shots range: ClosedRange<Int>, to style: String,
+                        cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil) throws -> Analysis {
+        precondition(range.lowerBound >= 0 && range.upperBound < analysis.shots.count)
+        let shots = Array(analysis.shots[range])
+        let sums = try accumulate(analysis, source: url, parts: shots.map { ($0, style) }, cancel: cancel, progress: progress)
+        return try replacing(analysis, shots: range, with: zip(shots, sums).map { ($0, $1, style) })
+    }
+
+    /// Decode the frames of `parts` (consecutive shots) in one range read and
+    /// return each part's sum of baked LUTs, every frame predicted in its part's style.
+    private func accumulate(_ analysis: Analysis, source url: URL, parts: [(shot: Shot, style: String)],
+                            cancel: CancelToken?, progress: ((Int) -> Void)?) throws -> [LUT3D] {
+        let first = parts.first!.shot.first, last = parts.last!.shot.last
+        for (p, q) in zip(parts, parts.dropFirst()) { precondition(q.shot.first == p.shot.last + 1, "parts must be consecutive") }
+        let predictors = try parts.map { try catalog.predictor($0.style) }
+        let sums = try parts.map { _ in try kernels.makeLUT(size: analysis.lutSize) }
+        let reader = try VideoReader(url: url, device: metal.device, timeRange: analysis.timeRange(first: first, last: last),
                                      frameTimes: analysis.frameTimes)
-        let before = try kernels.makeLUT(size: analysis.lutSize), after = try kernels.makeLUT(size: analysis.lutSize)
-        var seen = 0, times = StageTimes(), clock = Clock()
-        while let f = try reader.next(), f.index <= shot.last {
+        var part = 0, seen = 0, times = StageTimes(), clock = Clock()
+        while let f = try reader.next(), f.index <= last {
             if cancel?.isCancelled == true { throw Cancelled() }
-            let (baked, _) = try analyzeFrame(f, lutSize: analysis.lutSize, thumbnail: false, times: &times, clock: &clock)
-            try kernels.accumulate(f.index < frame ? before : after, baked)
+            while f.index > parts[part].shot.last { part += 1 }
+            let (baked, _) = try analyzeFrame(f, lutSize: analysis.lutSize, predictor: predictors[part], thumbnail: false,
+                                              times: &times, clock: &clock)
+            try kernels.accumulate(sums[part], baked)
             seen += 1
             progress?(f.index)
         }
-        guard seen == shot.frames else {
-            throw VideoError.reader("re-analysing shot \(k) decoded \(seen) frames, expected \(shot.frames)")
+        guard seen == last - first + 1 else {
+            throw VideoError.reader("re-analysing frames \(first)-\(last) decoded \(seen) frames, expected \(last - first + 1)")
         }
-        return try replacing(analysis, shots: k...k, with: [(Shot(first: shot.first, last: frame - 1), before),
-                                                            (Shot(first: frame, last: shot.last), after)])
+        return sums
     }
 
-    private func replacing(_ a: Analysis, shots range: ClosedRange<Int>, with parts: [(Shot, LUT3D)]) throws -> Analysis {
-        var shots = a.shots, sums = a.sums, luts = a.luts
+    private func replacing(_ a: Analysis, shots range: ClosedRange<Int>, with parts: [(Shot, LUT3D, String)]) throws -> Analysis {
+        var shots = a.shots, sums = a.sums, luts = a.luts, styles = a.styles
         shots.replaceSubrange(range, with: parts.map(\.0))
         sums.replaceSubrange(range, with: parts.map(\.1))
         luts.replaceSubrange(range, with: try parts.map { try kernels.mean($0.1, frames: $0.0.frames) })
+        styles.replaceSubrange(range, with: parts.map(\.2))
         return Analysis(info: a.info, lutSize: a.lutSize, frameTimes: a.frameTimes, shots: shots, sums: sums,
-                        luts: luts, times: a.times, warnings: a.warnings)
+                        luts: luts, styles: styles, times: a.times, warnings: a.warnings)
     }
 
     // MARK: strength
@@ -291,9 +333,18 @@ public final class AutoGrader {
         return try luts.enumerated().map { k, lut in
             let url = directory.appendingPathComponent(Self.cubeName(prefix: prefix, shot: k))
             let shot = analysis.shots[k]
-            try CubeWriter.write(lut, title: "AutoGrade \(prefix) shot \(k) (frames \(shot.first)-\(shot.last))", to: url)
+            try CubeWriter.write(lut, title: "AutoGrade \(prefix) shot \(k) (frames \(shot.first)-\(shot.last)), "
+                                 + styleCredit(analysis.styles[k]), to: url)
             return url
         }
+    }
+
+    /// Style name and licence in short, for the `.cube` title (CLAUDE.md 风格模型).
+    func styleCredit(_ id: String) -> String {
+        let style = catalog.style(id)
+        let film = style?.license.contains("CC BY-SA 4.0") == true ? "; film look CC BY-SA 4.0" : ""
+        let name = (style?.nameEN ?? id).replacingOccurrences(of: "\"", with: "'")
+        return "style \(name) [\(id)]: research use only, non-commercial\(film)"
     }
 
     public static func cubeName(prefix: String, shot: Int) -> String {

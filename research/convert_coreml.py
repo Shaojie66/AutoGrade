@@ -8,10 +8,17 @@ held to the oracle separately (CLAUDE.md, "对照先于功能").
 After conversion the package is checked against PyTorch on the upstream demo
 image and on random inputs, fp32 on cpuAndGPU, tolerance 1e-4.
 
-Usage: research/.venv/bin/python -I research/convert_coreml.py [--checkpoint RUN/stepN.pth --out RUN/Name.mlpackage]
+Usage: research/.venv/bin/python -I research/convert_coreml.py \
+           [--checkpoint RUN/stepN.pth --out RUN/Name.mlpackage --name-en "Velvia 50" --name-zh "Velvia 50"]
 Without arguments it converts the upstream FiveK weights into Resources/Models/
 (what the app ships). Fine-tuned runs must write into research/runs/ instead:
 trained weights are not committed (CLAUDE.md, research/runs).
+
+For a fine-tuned style it also stores the display names in the model metadata
+(`autograde.name.en` / `autograde.name.zh`, read by Core/StyleCatalog.swift) and
+writes RUN/reference/: the PyTorch lut and vertices on the four fixture inputs
+(fixtures/*_resized256.f32), which StyleParityTests compares the Swift path to.
+Tools/install-style.sh then installs the package (CLAUDE.md, 风格模型).
 """
 import argparse
 import sys
@@ -24,11 +31,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import hashlib
+import json
+
 from oracle.ailut import UPSTREAM, load_model
 from fixture_io import load_rgb, resize256
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "Resources" / "Models" / "AdaIntFiveK.mlpackage"
+FIXTURES = ROOT / "fixtures"
+REFERENCE_INPUTS = ["demo", "gym_a", "gym_b", "comic"]   # Tests/ParityTests.inputs
 TOL = 1e-4
 
 
@@ -50,9 +62,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", type=Path, default=None, help="fine-tuned .pth (research/runs/...)")
     ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--name-en", help="style display name, English (fine-tuned only)")
+    ap.add_argument("--name-zh", help="style display name, Simplified Chinese (fine-tuned only)")
     args = ap.parse_args()
     if args.checkpoint and (ROOT / "Resources") in args.out.resolve().parents:
         sys.exit("fine-tuned weights must not be written into Resources/ (not shipped, not committed)")
+    if args.checkpoint and not (args.name_en and args.name_zh):
+        sys.exit("a fine-tuned style needs --name-en and --name-zh (shown in the app)")
     out = args.out
     net = Network(load_model("fivek", checkpoint=args.checkpoint)).eval()
     example = torch.rand(1, 3, 256, 256)
@@ -72,6 +88,9 @@ def main():
     mlmodel.short_description = ("AiLUT network, FiveK sRGB. Input: RGB in [0,1] already resized to 256x256 "
                                  "(bilinear, align_corners=False). Output: LUT lut[c][b][g][r] and per-channel vertices.")
     mlmodel.version = f"finetune:{args.checkpoint.parent.name}/{args.checkpoint.name}" if args.checkpoint else "fivek-srgb@5678851"
+    if args.checkpoint:
+        mlmodel.user_defined_metadata["autograde.name.en"] = args.name_en
+        mlmodel.user_defined_metadata["autograde.name.zh"] = args.name_zh
     out.parent.mkdir(parents=True, exist_ok=True)
     mlmodel.save(str(out))
     print(f"wrote {out}")
@@ -90,6 +109,31 @@ def main():
           f"lut max {worst['lut']:.2e}, vertices max {worst['vertices']:.2e} (tolerance {TOL:.0e})")
     if max(worst.values()) > TOL:
         sys.exit("FAILED: CoreML output outside tolerance")
+    if args.checkpoint:
+        write_reference(net, out.parent / "reference")
+
+
+def write_reference(net, ref: Path):
+    """PyTorch outputs on the fixture inputs, for StyleParityTests (Swift path vs PyTorch)."""
+    manifest = json.loads((FIXTURES / "manifest.json").read_text())["files"]
+    ref.mkdir(exist_ok=True)
+    doc = {"inputs": {}, "files": {}}
+    for name in REFERENCE_INPUTS:
+        entry = manifest[f"{name}_resized256"]
+        raw = (FIXTURES / entry["file"]).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+            sys.exit(f"fixtures/{entry['file']} does not match its manifest; regenerate fixtures first")
+        doc["inputs"][name] = entry["sha256"]
+        x = torch.from_numpy(np.frombuffer(raw, dtype="<f4").copy()).reshape(entry["shape"])
+        with torch.no_grad():
+            lut, ver = net(x)
+        for key, t in (("lut", lut), ("vertices", ver)):
+            path = ref / f"{name}_{key}.f32"
+            path.write_bytes(t.numpy().astype("<f4").tobytes(order="C"))
+            doc["files"][f"{name}_{key}"] = {"file": path.name, "shape": list(t.shape),
+                                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    (ref / "reference.json").write_text(json.dumps(doc, indent=2) + "\n")
+    print(f"wrote {ref} ({len(doc['files'])} tensors on {len(REFERENCE_INPUTS)} fixture inputs)")
 
 
 if __name__ == "__main__":

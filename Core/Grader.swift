@@ -14,26 +14,47 @@ public enum GraderError: Error, CustomStringConvertible {
     }
 }
 
-/// The AdaInt network (Resources/Models/AdaIntFiveK.mlpackage): a 256x256
-/// planar RGB image in, the per-image AiLUT out. Resizing and applying the LUT
-/// are Metal's job (GradeKernels), so each step is held to its own fixture.
-public final class Grader: @unchecked Sendable {
+/// Whatever turns a 256x256 planar RGB image into a per-image AiLUT: the
+/// CoreML network in the app, a fixed AiLUT in tests (StyleTests).
+public protocol LUTPredictor: AnyObject, Sendable {
+    func predict(_ resized: PlanarImage) throws -> AiLUT
+}
+
+/// The AdaInt network (Resources/Models/AdaIntFiveK.mlpackage, or an installed
+/// style, CLAUDE.md 风格模型): a 256x256 planar RGB image in, the per-image
+/// AiLUT out. Resizing and applying the LUT are Metal's job (GradeKernels), so
+/// each step is held to its own fixture.
+public final class Grader: LUTPredictor, @unchecked Sendable {
     public static let inputSide = 256
     public static let lutSize = 33
-    private let model: MLModel
+    public let model: MLModel
     private let kernels: GradeKernels
+
+    /// The built-in FiveK model's compiled location inside the framework.
+    public static func builtinModelURL() throws -> URL {
+        guard let url = Bundle(for: Grader.self).url(forResource: "AdaIntFiveK", withExtension: "mlmodelc") else {
+            throw GraderError.missingModel
+        }
+        return url
+    }
 
     /// `.cpuAndGPU` with the fp32 model is the configuration the parity tests
     /// hold to 1e-4. The Neural Engine runs fp16 and is a separate measurement
     /// (CLAUDE.md, 精度与对照纪律).
-    public init(kernels: GradeKernels, computeUnits: MLComputeUnits = .cpuAndGPU) throws {
-        guard let url = Bundle(for: Grader.self).url(forResource: "AdaIntFiveK", withExtension: "mlmodelc") else {
-            throw GraderError.missingModel
-        }
+    public convenience init(kernels: GradeKernels, computeUnits: MLComputeUnits = .cpuAndGPU) throws {
+        try self.init(kernels: kernels, modelURL: try Self.builtinModelURL(), computeUnits: computeUnits)
+    }
+
+    /// `modelURL` is a compiled `.mlmodelc` with the AdaInt network's inputs and outputs.
+    public init(kernels: GradeKernels, modelURL: URL, computeUnits: MLComputeUnits = .cpuAndGPU) throws {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
-        self.model = try MLModel(contentsOf: url, configuration: config)
+        self.model = try MLModel(contentsOf: modelURL, configuration: config)
         self.kernels = kernels
+        let inputs = model.modelDescription.inputDescriptionsByName, outputs = model.modelDescription.outputDescriptionsByName
+        guard inputs["image"] != nil, outputs["lut"] != nil, outputs["vertices"] != nil else {
+            throw GraderError.badOutput("\(modelURL.lastPathComponent) is not an AdaInt network (inputs \(inputs.keys.sorted()), outputs \(outputs.keys.sorted()))")
+        }
     }
 
     /// `resized` must be 256x256 (GradeKernels.resize) and its producing command complete.

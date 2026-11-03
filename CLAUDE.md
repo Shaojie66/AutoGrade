@@ -8,7 +8,8 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 视频进 → 按镜头切分 → 每个镜头由模型（AdaInt, CVPR 2022）生成一个 3D LUT → 套用并导出视频，同时导出每镜头 `.cube`。
 
 - 来历：`~/camera/experiments/adaint/` 的试跑（2026-11-02）。那里的数字是本项目的起点基准，见文末。
-- 当前权重：AdaInt **FiveK sRGB**。它学的是"把照片修正常"，不是电影感风格；风格训练是后续阶段。
+- 内置权重：AdaInt **FiveK sRGB**（风格 id `fivek`）。它学的是"把照片修正常"，不是电影感风格。
+- 胶片风格（Velvia 50、Ektachrome 100 VS 等）是本机安装的额外模型，不随仓库和 App 分发，见"风格模型"。
 
 ## 架构原则
 
@@ -25,6 +26,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
    - **8-bit 量化**：`clamp(x,0,1)·255` 后四舍六入五成双（PyTorch `round` / Metal `rint`）。
    - **强度** s∈[0,1]：最终 LUT = `s·shotLUT + (1−s)·identity`（这个写法使 s=1、s=0 在浮点下也严格等于两端；`identity + s·(…)` 做不到），恒等格点值与 `linspace01` 相同。s=0 即原片（三线性对恒等 LUT 精确）。导出视频、`.cube`、预览都用这份最终 LUT。
    - **切点编辑**：每镜头保存未截断的累加和与帧数。删切点 = 累加和相加（精确，不重新分析）；加切点 = 只重新分析被拆的镜头。
+   - **风格**：每个镜头有一个风格 id，累加和只在同一风格内相加。换一个镜头的风格 = 只重新分析该镜头；换全部 = 整段重新分析一遍，**保留当前切点**，不重新切镜。加切点时两半继承原风格。删切点时，若两镜头风格相同则累加和直接相加；若不同，合并后的镜头用前一个的风格，后一段先用该风格重新分析再相加（与"合并后沿用前一个镜头的强度"一致）。
 
 ## 目录约定
 
@@ -47,7 +49,8 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `research/data/fivek-srgb480/` | 由上面 DNG 渲染的 8-bit sRGB PNG，短边 480 | 只能由 `research/train/render_dng.swift` 生成（macOS Core Image RAW，按相机白平衡与曝光，不做任何调色） |
 | `research/runs/<run>/` | 每次训练的配置、日志、checkpoint、报告、转换出的 `.mlpackage` | 不进 git；**训练权重不提交、不推送**（同时受 FiveK 仅限研究与 CC BY-SA 4.0 约束，发布方式待主人决定）；可随时清空重跑 |
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
-| `Tools/` | 构建脚本 | |
+| `Tools/` | 构建脚本；`install-style.sh` 把 `research/runs/<run>/` 的风格模型编译后装进本机风格目录 | |
+| `~/Library/Application Support/AutoGrade/Styles/`（仓库外） | 本机安装的风格模型 `<id>.mlmodelc`，旁边的 `<id>.reference/` 存放 PyTorch 对照数据 | 只能由 `Tools/install-style.sh` 写入；文件名就是风格 id，`fivek` 保留给内置模型；显示名和许可写在模型元数据里（`convert_coreml.py --name-en/--name-zh`）。App 和 CLI 只读、不写；目录不存在时只有 FiveK |
 | `licenses/` | 第三方许可原文（FiveK 两份）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
 | `docs/images/` | README 用的真实截图 | 只截 App 窗口，不含桌面或其他应用；写明来源（如界面验收的哪一张）；JPEG ≤ 300 KB |
 | `README.md` / `README_EN.md` | 中文主 README 与英文版 | 两份顶部互链并带同一 `README_SYNC` 标记；改一份必须同步另一份，改完跑 qiangshou 的 `validate_readme_pair.py` |
@@ -104,6 +107,15 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - 预览显示 vs QuickTime（gym 第 101 帧画面中心 20%，整屏截图，均为 Display P3）：CAMetalLayer+`itur_709` 与 BGRA 送显示层都是 (128.3, 98.7, 61.3)；改为 420v 同标签同色彩空间后 **(126.0, 93.9, 52.0)**，QuickTime (126.4, 93.7, 52.2)，差 ≤0.4 级（2026-11-02）。主人定以 QuickTime 为准 → 架构原则 5。
 - 离线预测 QuickTime 显示值：`out/colour/predict.swift`（解码器 YUV → CoreImage → 截图的色彩配置），与 QuickTime 实拍截图差 ≤0.1 级；可在不开界面时先判断改动方向。
 - 多屏环境：QuickTime 打开时回到它上次的窗口位置，不跟随前台应用所在的屏；跨屏挪窗口会让辅助功能找不到窗口。截图用 `screencapture f1 f2 f3` 一次截所有屏再挑；截图统一存为 Display P3，跨屏数值可比。
+
+## 风格模型
+
+- 训练出的风格模型同时受 FiveK（仅限研究、非商用）和 CC BY-SA 4.0 约束：**只在本机安装使用，不进 git、不推送、不打进 App**。别人 clone 后构建出的 App 只有 FiveK，功能完整。
+- 安装：`research/convert_coreml.py --checkpoint … --out … --name-en … --name-zh …`（同时写出 `reference/`），然后 `Tools/install-style.sh <run>/<Name>.mlpackage <id>`。
+- 对照：`StyleParityTests` 对每个已安装且带 `reference/` 的风格，在 Swift 路径下与 PyTorch 对照，容差 ≤1e-4（与 FiveK 相同）。没有安装时会跳过；汇报时写明跑了几个、跳过几个。
+- 导出的 `.cube` 标题行写明风格名和许可简写。
+- 界面验收（2026-11-03，Terra 第三轮，comic 6 镜头）：单镜头换 Velvia、工具栏全部换 Ektachrome、默认风格写入 / 恢复 `fivek`、英文文案与设置页均通过。**取消未在界面里验到**：361 帧整段换风格约 3 秒完成，来不及按；取消由 `testCancelledRestyleLeavesTheAnalysisAsItWas` 在 Core 覆盖，“取消后不记住默认风格”（`Project.setStyleForAll`）尚无界面验证，下次界面验收用 `gym_4k.mp4` 补。
+- 2026-11-03 实测（Release CLI，负载 42，ollama 在跑）：gym 1080p 整段分析 FiveK 与 Velvia 50 都约 9 ms/帧，换风格不变慢；换一个镜头的风格耗时 ≈ 该镜头帧数 × 9 ms。伊斯坦布尔 4K（`--cut 3`，1 个镜头）第 250 帧天空亮度：原片 170.3 / FiveK 186.4 / Velvia 50 163.7 / Ektachrome 100 VS 162.5，与训练评估（163.4 / 162.4）一致。
 
 ## 风格训练
 
