@@ -31,14 +31,16 @@ from train.haldclut import apply_lut, film, load_haldclut
 
 RESEARCH = Path(__file__).resolve().parent.parent
 ROOT = RESEARCH.parent
-DEFAULT_IMAGES = RESEARCH / "data" / "fivek480p" / "input" / "JPG" / "480p"
-ANNFILES = UPSTREAM / "adaint" / "annfiles" / "FiveK"
+DEFAULT_IMAGES = RESEARCH / "data" / "fivek-srgb480"          # render_dng.swift output
+ANNFILES = DEFAULT_IMAGES                                      # train.txt / test.txt written from selection.json
+UPSTREAM_ANNFILES = UPSTREAM / "adaint" / "annfiles" / "FiveK"
 
 
 def image_list(images: Path, list_file: Path | None) -> list[Path]:
     if list_file:
         names = [l.strip() for l in list_file.read_text().splitlines() if l.strip()]
-        paths = [images / f"{n}.jpg" for n in names]
+        paths = [next((images / f"{n}{ext}" for ext in (".png", ".jpg") if (images / f"{n}{ext}").exists()),
+                      images / f"{n}.png") for n in names]
     else:
         paths = sorted(p for p in images.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     missing = [p for p in paths if not p.exists()]

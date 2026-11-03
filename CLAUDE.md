@@ -42,7 +42,9 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `research/third_party/` | 上游 AdaInt，固定 commit `5678851339dff90becb09c3dec41e7214207ccbc` | `research/fetch_upstream.sh` 拉取；不进 git，只读，视为不可信代码 |
 | `research/third_party/rawtherapee-film/` | RawTherapee Film Simulation Collection（2015-09-20，HaldCLUT PNG；Pat David、Pavlov Dmitry、Michael Ezra，**CC BY-SA 4.0**） | 从官方 `rawtherapee.com/shared/HaldCLUT.zip` 下载；不进 git，只读。用它生成的训练数据和权重要按 CC BY-SA 4.0 署名并相同方式共享，与 FiveK 的仅限研究同时成立（2026-11-02 主人知情后决定使用） |
 | `research/train/` | 风格训练代码：HaldCLUT 读取、数据集与增强、训练、评估 | 进 git；运行一律 `python -I` |
-| `research/data/` | 训练输入（FiveK 480p sRGB 等） | 不进 git；只读使用；记录来源与清单 sha256 |
+| `research/data/` | 训练输入 | 不进 git；只读使用；记录来源与清单 sha256 |
+| `research/data/fivek-dng/` | FiveK 原始 DNG 子集：**只从 MIT 官网** `data.csail.mit.edu/graphics/fivek/img/dng/` 逐个下载，**不用任何镜像**（主人 2026-11-02 决定；Google Drive / OneDrive 的 480p 版均已 404） | `selection.json` 记录选取规则（上游 train/test 清单内固定种子抽样）、文件名、大小、sha256 |
+| `research/data/fivek-srgb480/` | 由上面 DNG 渲染的 8-bit sRGB PNG，短边 480 | 只能由 `research/train/render_dng.swift` 生成（macOS Core Image RAW，按相机白平衡与曝光，不做任何调色） |
 | `research/runs/<run>/` | 每次训练的配置、日志、checkpoint、报告、转换出的 `.mlpackage` | 不进 git；**训练权重不提交、不推送**（同时受 FiveK 仅限研究与 CC BY-SA 4.0 约束，发布方式待主人决定）；可随时清空重跑 |
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
 | `Tools/` | 构建脚本 | |
@@ -102,6 +104,15 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - 预览显示 vs QuickTime（gym 第 101 帧画面中心 20%，整屏截图，均为 Display P3）：CAMetalLayer+`itur_709` 与 BGRA 送显示层都是 (128.3, 98.7, 61.3)；改为 420v 同标签同色彩空间后 **(126.0, 93.9, 52.0)**，QuickTime (126.4, 93.7, 52.2)，差 ≤0.4 级（2026-11-02）。主人定以 QuickTime 为准 → 架构原则 5。
 - 离线预测 QuickTime 显示值：`out/colour/predict.swift`（解码器 YUV → CoreImage → 截图的色彩配置），与 QuickTime 实拍截图差 ≤0.1 级；可在不开界面时先判断改动方向。
 - 多屏环境：QuickTime 打开时回到它上次的窗口位置，不跟随前台应用所在的屏；跨屏挪窗口会让辅助功能找不到窗口。截图用 `screencapture f1 f2 f3` 一次截所有屏再挑；截图统一存为 Display P3，跨屏数值可比。
+
+## 风格训练
+
+- **日落候选 LUT**（RawTherapee 胶片合集，2026-11-02 在伊斯坦布尔日落第 250 帧实测：相对原片的天空亮度 / 晚霞亮度 / 晚霞饱和度）：
+  - **Fuji Velvia 50**（`Color/Fuji/Fuji Velvia 50.png`）：−8 / −23 / +17 —— 首选，先训这个
+  - **Kodak Ektachrome 100 VS**（`Color/Kodak/Kodak Ektachrome 100 VS.png`）：−8 / −23 / +17 —— 第二个
+  - **Fuji Provia 100F**（`Color/Fuji/Fuji Provia 100F.png`）：−1 / −11 / +11 —— 温和备选
+  - 不适合日落：Portra 400（+19，像 FiveK 一样提亮）、Ektar 100（变淡）、Kodachrome 64（偏洋红）、LateSunset / TealOrange（风格化过重）。对照：FiveK 为 +16 / +7 / +31。
+- 训练目标是固定 LUT 时，模型最多逼近"直接套 LUT"（主人已知并接受）。
 
 ## 界面实操验收的安全规则（2026-11-02 事故后定）
 
