@@ -86,7 +86,8 @@ struct MainWindow: View {
         } else if let busy = project.busy {
             progressCard(L(busy), project.busyProgress, cancellable: true)
         } else if let p = project.exportProgress {
-            progressCard(L(S.exporting), p, cancellable: true)
+            progressCard(L(project.exportChecking ? S.checkingExport : S.exporting), project.exportChecking ? 1 : p,
+                         cancellable: !project.exportChecking)
         }
     }
 

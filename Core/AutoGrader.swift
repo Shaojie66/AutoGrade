@@ -23,6 +23,15 @@ public struct StageTimes: Sendable {
     public var frames = 0
 }
 
+/// What pass 2 wrote: what ExportCheck needs to know to check the file.
+public struct RenderResult: Sendable {
+    public let times: StageTimes
+    public let codec: OutputCodec
+    /// Audio packets copied; nil when the output has no audio track.
+    public let audioPackets: Int?
+    public let warnings: [String]
+}
+
 /// Result of pass 1, and the state cut editing works on. Preview and export
 /// both read this (CLAUDE.md 架构原则 3). `sums` are the unclamped per-shot
 /// sums of baked LUTs; `luts` are their clamped means (CLAUDE.md, 切点编辑).
@@ -282,16 +291,17 @@ public final class AutoGrader {
 
     // MARK: pass 2
 
-    /// Encode the video with one final LUT per shot (`finalLUTs`). On error or
-    /// cancellation the partial output — a file this call created — is removed.
-    /// `frameHook` sees each graded BGRA buffer before it is appended (tests).
+    /// Encode the video with one final LUT per shot (`finalLUTs`), and copy the
+    /// source's first audio track unless `audio` is false (CLAUDE.md 导出). On
+    /// error or cancellation the partial output — a file this call created — is
+    /// removed. `frameHook` sees each graded BGRA buffer before it is appended (tests).
     public func render(_ url: URL, analysis: Analysis, luts: [LUT3D], to output: URL, codec: OutputCodec = .hevc,
-                       cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil,
-                       frameHook: ((Int, CVPixelBuffer) -> Void)? = nil) throws -> StageTimes {
+                       audio: Bool = true, cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil,
+                       frameHook: ((Int, CVPixelBuffer) -> Void)? = nil) throws -> RenderResult {
         precondition(luts.count == analysis.shots.count)
         let reader = try VideoReader(url: url, device: metal.device)
         let writer = try VideoWriter(url: output, width: reader.info.width, height: reader.info.height,
-                                     codec: codec, device: metal.device)
+                                     codec: codec, device: metal.device, audioFrom: audio ? url : nil)
         do {
             let scratch = (try kernels.makeImage(width: reader.info.width, height: reader.info.height),
                            try kernels.makeImage(width: reader.info.width, height: reader.info.height))
@@ -319,7 +329,7 @@ public final class AutoGrader {
             guard times.frames == analysis.frameCount else {
                 throw VideoError.reader("render decoded \(times.frames) frames, analysis saw \(analysis.frameCount)")
             }
-            return times
+            return RenderResult(times: times, codec: codec, audioPackets: writer.audioPackets, warnings: writer.warnings)
         } catch {
             writer.cancel()
             throw error

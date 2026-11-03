@@ -55,7 +55,9 @@ final class Project {
     var showingExport = false
     var exportCodec: OutputCodec = .hevc
     var exportCubes = false
+    var exportAudio = true                       // copy the source's audio track (CLAUDE.md 导出)
     private(set) var exportProgress: Double?
+    private(set) var exportChecking = false      // the check after writing is running
     private(set) var lastExport: URL?
 
     private let engine: Engine?
@@ -351,6 +353,7 @@ final class Project {
         let save = NSSavePanel()
         save.allowedContentTypes = [.quickTimeMovie]
         save.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + "_graded.mov"
+        save.directoryURL = source.deletingLastPathComponent()   // next to the source by default
         guard save.runModal() == .OK, let output = save.url else { return }   // the panel itself confirms replacing
 
         var cubes: URL?
@@ -364,7 +367,7 @@ final class Project {
             guard folder.runModal() == .OK, let dir = folder.url else { return }
             cubes = dir
         }
-        let codec = exportCodec
+        let codec = exportCodec, audio = exportAudio && (summary?.hasAudio ?? false)
         Task {
             if let dir = cubes {
                 let existing = await engine.cubeNames().filter {
@@ -380,17 +383,22 @@ final class Project {
                 }
             }
             exportProgress = 0
+            exportChecking = false
             do {
-                try await engine.export(to: output, codec: codec, cubes: cubes) { p in
-                    Task { @MainActor in if self.exportProgress != nil { self.exportProgress = p } }
-                }
+                let report = try await engine.export(to: output, codec: codec, audio: audio, cubes: cubes,
+                    progress: { p in Task { @MainActor in if self.exportProgress != nil { self.exportProgress = p } } },
+                    checking: { Task { @MainActor in self.exportChecking = true } })
                 lastExport = output
-                alert = Alert(title: S.exportDone, message: output.path)
+                alert = Alert(title: report.passed ? S.exportDone : S.exportCheckFailed,
+                              message: L(S.exportSummary(output.path, frames: report.videoSamples, sampled: report.frames.count,
+                                                         audioPackets: report.audioPackets, failures: report.failures,
+                                                         warnings: report.warnings)))
             } catch is Cancelled {
             } catch {
                 alert = Alert(title: S.exportFailed, message: "\(error)")
             }
             exportProgress = nil
+            exportChecking = false
         }
     }
 

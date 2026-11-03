@@ -16,7 +16,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 1. **一个进程，运行时没有 Python。** Swift + Metal + CoreML + AVFoundation。Python 只存在于 `research/`，用于模型转换、生成对照数据、将来训练。产品代码不得调用、依赖或打包任何 Python 与 ffmpeg。
 2. **对照先于功能。** 每个数值环节（缩放、模型、AiLUT 应用、烘焙、平均、`.cube`）都有黄金数据和 XCTest 对照。基准是**上游官方 C++ CPU 算子**（`research/oracle/`），不是我们自己的 PyTorch 改写。
 3. **两遍处理。** 第一遍分析（预测 LUT、切镜、每镜头平均），第二遍渲染。预览和导出读同一份分析结果。
-5. **预览像素 = 导出编码前像素；预览显示 = QuickTime 显示。** App 预览与导出走同一组 Metal 算子、同一份每镜头最终 LUT（含强度）；`testPreviewIsByteIdenticalToExport` 逐字节锁定。App 不得有自己的调色或颜色转换代码路径。
+5. **预览像素 = 导出编码前像素；预览显示 = QuickTime 显示。** App 预览与导出走同一组 Metal 算子、同一份每镜头最终 LUT（含强度）；`testPreviewIsByteIdenticalToExport` 逐字节锁定。App 不得有自己的调色或颜色转换代码路径。导出后自检（见"导出"）重新调来源帧时也走同一个 `encodeGradeFrame`。
    上屏走 AVFoundation 的视频显示路径（`AVSampleBufferDisplayLayer`），送入的是和解码器输出**同格式同标签**的帧：8-bit 4:2:0 BT.709 limited（'420v'），带原色/传递函数/矩阵、色度位置 Left 和 `kCVImageBufferCGColorSpaceKey`（由这些标签推导出的 CoreMedia709）。RGB→YUV 用架构原则 4 的同一矩阵；色度取偶数列、上下两行平均（与解码约定的采样位置对应）。**不自己挑 CGColorSpace 或 gamma 去凑**。2026-11-02 实测：CAMetalLayer+`itur_709` 和 BGRA 送显示层都比 QuickTime 亮（同屏整屏截图中心 (128.3, 98.7, 61.3) vs (126.4, 93.7, 52.2)），而导出文件本身无偏（`ExportRoundTripTests`），差在 RGB 上屏这一步。对比分屏由 `Display.metal` 逐像素选源，不重采样。
 6. **App 只做界面。** 数值逻辑（切点合并/拆分、强度、取消）都在 Core 并有测试；`App/` 里只有状态、视图和调度。
 4. **颜色约定显式写出，不靠默认值。** 视频按 display-referred 处理（FiveK sRGB 权重的输入假设）。改动任一约定都要同时更新对照数据（`research/make_fixtures.py` 是这些约定的可执行定义）：
@@ -27,6 +27,14 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
    - **强度** s∈[0,1]：最终 LUT = `s·shotLUT + (1−s)·identity`（这个写法使 s=1、s=0 在浮点下也严格等于两端；`identity + s·(…)` 做不到），恒等格点值与 `linspace01` 相同。s=0 即原片（三线性对恒等 LUT 精确）。导出视频、`.cube`、预览都用这份最终 LUT。
    - **切点编辑**：每镜头保存未截断的累加和与帧数。删切点 = 累加和相加（精确，不重新分析）；加切点 = 只重新分析被拆的镜头。
    - **风格**：每个镜头有一个风格 id，累加和只在同一风格内相加。换一个镜头的风格 = 只重新分析该镜头；换全部 = 整段重新分析一遍，**保留当前切点**，不重新切镜。加切点时两半继承原风格。删切点时，若两镜头风格相同则累加和直接相加；若不同，合并后的镜头用前一个的风格，后一段先用该风格重新分析再相加（与"合并后沿用前一个镜头的强度"一致）。
+
+## 导出
+
+- **音轨原样复制**：复制来源的第一条音轨，压缩包逐包写入、不重新编码、时间戳不变；音轨比视频长也整条保留，不裁剪。来源有多条音轨时警告；音轨无法原样写进 `.mov` 时跳过并警告，不让导出失败。CLI `--no-audio` / App 导出面板“保留原音轨”可关闭。
+  - AAC 开头的编码器垫包：AVAssetReader 按来源的剪辑表跳过垫包，AVAssetWriter 再用自己的方式重建（复制第一个包），所以垫了多个包的来源（主人的 gym：来源 2 个垫包，成片 347 包 vs 346）**压缩字节不会完全相同**。2026-11-03 实测：苹果自己的直通导出（`AVAssetExportPresetPassthrough`）与我们的输出逐字节相同；苹果解码器解出的波形与来源逐点一致（最大差 1.5e-7），仅结尾短 34 个采样；ffmpeg 解码则开头 46 ms 不同、结尾短 46 ms（它对苹果垫包写法的理解不同）。以苹果解码（QuickTime 播放）为准。
+- **导出后自检**（`Core/ExportCheck.swift`，借鉴 OpenMontage 的渲染后自检思路，不抄其 AGPL 代码）：每次导出后自动核对成片——视频样本时间戳与分析的 `frameTimes` 逐个相等；宽高、编码与 BT.709 三项颜色标签；音轨应有则有，用苹果解码器把来源与成片解成波形逐点比较（容差见容差表），应无则无；每个镜头中间帧抽查（最多 12 帧），成片解码结果与用同一份最终 LUT 重新调色的来源帧比较，阈值见容差表。
+- 2026-11-03 主人 5 段素材实测（Release，负载 8–12）：7 次导出（HEVC 5 次、ProRes 2 次）自检全部通过；画面抽查平均误差 HEVC 0.42–1.42 级、ProRes 0.81–2.27 级；音频解码后最大差 ≤5.4e-7，长度差 0–34 个采样；自检耗时占整次导出 9–12%（伊斯坦布尔 4K：1.48 s / 12.5 s）。
+- 自检不通过：**保留文件**，不自动删除；CLI 打印失败项并以退出码 1 结束，App 提示“导出完成，但自检未通过”并列出失败项。
 
 ## 目录约定
 
@@ -90,7 +98,7 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - Metal 一律 `-fmetal-math-mode=safe -fmetal-math-fp32-functions=precise`，部署目标 macOS 15。`ProbeTests` 会在快速数学被打开时失败，这是预期行为，不要绕过。
 - 三线性插值**手写**，不用硬件 3D 纹理采样（插值权重精度不足）。
 - CoreML 对照在 `cpuAndGPU` + fp32 下进行。ANE / fp16 是性能选项，单独测量、单独记录，不放宽对照容差来迁就它。
-- 容差表（改动须写明原因）：缩放 ≤1e-5；模型输出 ≤1e-4；AiLUT 应用 8-bit 0 LSB（若为 1 LSB 须写明原因）；65³ 烘焙/平均/应用 8-bit 0 LSB（2026-11-02 实测 0；≤1 的容差放过了 0.1% 的插值权重错误，故收紧）；`.cube` 经 ffmpeg `lut3d` 套用 vs Metal ≤1 LSB（ffmpeg 只在测试里用）。
+- 容差表（改动须写明原因）：导出自检画面抽查：平均误差 ≤4 级、每通道平均偏差 ≤3 级（2026-11-03 实测：正常导出最差 2.40 / 1.27（合成图 ProRes），主人素材最差 2.27 / 0.87；一个镜头漏调色 12.1 / −12.4）；导出自检音轨：解码波形逐点 ≤1e-6，长度差 ≤1 个压缩包（AAC 1024 采样；PCM 0）——比较压缩字节会把正常的 AAC 垫包重建误判为失败（见"导出"）；缩放 ≤1e-5；模型输出 ≤1e-4；AiLUT 应用 8-bit 0 LSB（若为 1 LSB 须写明原因）；65³ 烘焙/平均/应用 8-bit 0 LSB（2026-11-02 实测 0；≤1 的容差放过了 0.1% 的插值权重错误，故收紧）；`.cube` 经 ffmpeg `lut3d` 套用 vs Metal ≤1 LSB（ffmpeg 只在测试里用）。
 - 新的回归测试要先看到它失败，再改到通过。
 - "0 failures" 不等于测过了：确认测试数量与跳过数量。
 - 测速必须附上当时的 `uptime` 和 `ps -Ao %cpu,comm -r | head -5`；这台机器常有 ollama 等负载，交替测量，不要先后各测一次。
@@ -102,6 +110,7 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - 后台运行的 ffmpeg 要加 `-nostdin`。
 - 颜色直方图切镜阈值 0.5 在低饱和（水墨）画面会漏切；当前默认 0.25。
 - 反过来，单镜头里大块物体经过也会被误切（2026-11-02 主人的车窗街景 `sd1793455645_2.mov`：公交车进出画面，0.25 阈值切出 14 段，其中 10 段只有 1–2 帧；实际是 1 个连续镜头，`--cut 3` 即不切）。单帧镜头会让 LUT 闪一下；待改进：最短镜头长度或切点前后多帧确认。
+- AVAssetWriter 音视频交错（2026-11-03）：只补“不晚于当前视频帧”的音频会让两个输入互相等待而卡死；写入器会让音频领先视频约 7 秒。现在的做法是写入器肯收就写（`AudioPassthrough.pump`），视频写完后再 `drain`，任一输入 10 秒写不进去就报错，不无限等待。`synthetic_av.mp4` 的音频比视频长 7 秒，正是为了让 `drain` 真正被测到。
 - `codex exec` 在后台运行必须 `< /dev/null`，否则一直等 stdin（2026-11-02 白等 20 分钟）。
 - Codex 的 `workspace-write` 沙箱里 `screencapture` 失败（`could not create image from display`）；界面实操验收需要主人逐次批准 `danger-full-access`。
 - 预览显示 vs QuickTime（gym 第 101 帧画面中心 20%，整屏截图，均为 Display P3）：CAMetalLayer+`itur_709` 与 BGRA 送显示层都是 (128.3, 98.7, 61.3)；改为 420v 同标签同色彩空间后 **(126.0, 93.9, 52.0)**，QuickTime (126.4, 93.7, 52.2)，差 ≤0.4 级（2026-11-02）。主人定以 QuickTime 为准 → 架构原则 5。
@@ -132,7 +141,8 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 
 2026-11-02 子 agent 用 System Events 发键盘事件时，Claude 桌面端抢到前台，路径文字和回车落进了主人正在输入的另一个会话，发出了一条混杂消息。因此：
 
-- **只在主人确认"现在不用电脑"后才做界面实操**；每次都要主人当场同意，不沿用上一次的批准。
+- **优先在 MacBook Air 上做**（2026-11-03 主人决定）：Pro 是主人正在用的机器，键盘焦点会被抢（2026-11-03 Terra 两次因前台变成 `Electron` 中止）。做法：Release 版 `AutoGrade.app` 与测试视频复制到 Air 的 `~/AutoGradeTest/`，Terra 留在 Pro 上，通过 `ssh air` 用 `osascript` / `screencapture` 操作 Air，截图与导出文件拷回 Pro 的 `out/ui/` 再核对。Air 上 `sshd-keygen-wrapper` 需要“辅助功能”和“屏幕录制”权限（主人 2026-11-03 开启，测完提醒主人可以关掉）。Air 平时是 Pro 的第三块屏（`AirDisplayReceiver`），实操结束后把它切回前台。风格模型不复制到 Air（训练权重只在 Pro 本机使用），需要胶片风格的实操仍在 Pro 上做。
+- 在 Air 上做：主人同意这次实操、批准 `danger-full-access` 即可，不要求主人离开 Pro。**在 Pro 上做：只在主人确认"现在不用电脑"后才做**；两种情况都是每次当场同意，不沿用上一次的批准。
 - **禁止向"当前前台应用"发键盘事件**（`keystroke` / `key code`）。只用针对目标进程的辅助功能动作（`click button` / `click menu item` / `AXPress` / 设置 `AXValue`）。
 - 打开文件用 `open -a <App> <file>`，不走打开面板。
 - 任何一步前先确认前台进程是目标应用；不是就停下并报告，不重试。

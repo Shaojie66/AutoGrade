@@ -17,6 +17,7 @@ struct Summary: Sendable {
     let shots: [Shot]
     let strengths: [Float]
     let styles: [String]
+    let hasAudio: Bool
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -48,6 +49,7 @@ actor Engine {
     private var source: URL?
     private var analysis: Analysis?
     private var strengths: [Float] = []
+    private var hasAudio = false
     private var finals: [LUT3D] = []
     /// Three slots so the slot being drawn is never the one being written.
     private var previewSlots: [PreviewTargets] = []
@@ -77,6 +79,7 @@ actor Engine {
         }
         source = url
         analysis = result
+        hasAudio = (try? AudioPassthrough.trackCount(url)) ?? 0 > 0
         strengths = Array(repeating: 1, count: result.shots.count)
         finals = result.luts
         previewSlots = try (0..<3).map { _ in
@@ -147,7 +150,8 @@ actor Engine {
             return max(0, (stop - a.frameTimes[shot.first]).seconds)
         }
         let duration = max(end.seconds, 1e-6)
-        return Summary(info: a.info, shots: a.shots, strengths: strengths, styles: a.styles, shotSeconds: seconds,
+        return Summary(info: a.info, shots: a.shots, strengths: strengths, styles: a.styles, hasAudio: hasAudio,
+                       shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
 
@@ -234,11 +238,13 @@ actor Engine {
     // MARK: export
 
     /// Writes the graded video (and optionally the .cube files) with the
-    /// current strengths. Replacing an existing file is the caller's decision,
-    /// taken in the save panel; here it means: write a temp file beside it,
-    /// then swap it in, so a failed export never destroys the old one.
-    func export(to output: URL, codec: OutputCodec, cubes: URL?,
-                progress: @escaping @Sendable (Double) -> Void) throws {
+    /// current strengths, then checks it (CLAUDE.md 导出). Replacing an existing
+    /// file is the caller's decision, taken in the save panel; here it means:
+    /// write a temp file beside it, then swap it in, so a failed export never
+    /// destroys the old one. A failed check keeps the file; the report says why.
+    func export(to output: URL, codec: OutputCodec, audio: Bool, cubes: URL?,
+                progress: @escaping @Sendable (Double) -> Void,
+                checking: @escaping @Sendable () -> Void) throws -> ExportReport {
         guard let source, let a = analysis else { throw VideoError.reader("no video is open") }
         let token = control.begin()
         defer { control.end(token) }
@@ -247,9 +253,13 @@ actor Engine {
         let target = replacing
             ? output.deletingLastPathComponent().appendingPathComponent(".autograde-\(UUID().uuidString).mov")
             : output
-        _ = try core.render(source, analysis: a, luts: finals, to: target, codec: codec, cancel: token) { i in
+        let rendered = try core.render(source, analysis: a, luts: finals, to: target, codec: codec, audio: audio,
+                                       cancel: token) { i in
             progress(Double(i + 1) / Double(a.frameCount))
         }
+        checking()
+        var report = try core.checkExport(target, source: source, analysis: a, luts: finals, render: rendered)
+        report.warnings = rendered.warnings
         if replacing { _ = try fm.replaceItemAt(output, withItemAt: target) }
 
         if let cubes {
@@ -267,6 +277,7 @@ actor Engine {
             }
             try? fm.removeItem(at: staging)   // the now-empty staging directory this call made
         }
+        return report
     }
 
     /// Names the .cube export would write, so the interface can ask before replacing.

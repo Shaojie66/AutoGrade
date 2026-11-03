@@ -82,7 +82,10 @@ public final class VideoReader {
     private let rangeStart: CMTime?
     private var nextIndex = 0
 
-    public init(url: URL, device: MTLDevice, timeRange: CMTimeRange? = nil, frameTimes: [CMTime]? = nil) throws {
+    /// `checkingFormat: false` is only for reading back our own export (ExportCheck),
+    /// e.g. ProRes, which is never accepted as a source.
+    public init(url: URL, device: MTLDevice, timeRange: CMTimeRange? = nil, frameTimes: [CMTime]? = nil,
+                checkingFormat: Bool = true) throws {
         precondition(timeRange == nil || frameTimes != nil, "a range read needs frameTimes to index frames")
         self.frameTimes = frameTimes
         self.rangeStart = timeRange?.start
@@ -96,7 +99,7 @@ public final class VideoReader {
         }
         let (track, size, rate, formats, duration) = loaded.value
         guard let format = formats.first else { throw VideoError.unsupported("no format description") }
-        warnings = try Self.checkFormat(format)
+        warnings = checkingFormat ? try Self.checkFormat(format) : []
         info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration)
         guard info.width % 2 == 0, info.height % 2 == 0 else {
             throw VideoError.unsupported("odd frame size \(info.width)x\(info.height)")
@@ -210,8 +213,14 @@ public final class VideoWriter {
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let cache: CVMetalTextureCache
+    private let audio: AudioPassthrough?
+    /// Why audio was not (fully) copied, if it was not.
+    public private(set) var warnings: [String] = []
+    /// Audio packets written, or nil when the file has no audio track.
+    public var audioPackets: Int? { audio?.packets }
 
-    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice) throws {
+    /// `audioFrom`: copy that file's first audio track as it is (CLAUDE.md 导出).
+    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice, audioFrom: URL? = nil) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             throw VideoError.writer("\(url.path) already exists (refusing to overwrite)")
         }
@@ -239,8 +248,21 @@ public final class VideoWriter {
         ])
         guard writer.canAdd(input) else { throw VideoError.writer("cannot add video input") }
         writer.add(input)
+        var warnings: [String] = []
+        var audio = try audioFrom.flatMap { try AudioPassthrough.make(from: $0, warnings: &warnings) }
+        if let a = audio {
+            if writer.canAdd(a.input) {
+                writer.add(a.input)
+            } else {
+                warnings.append("the audio track cannot be copied into a .mov as it is; exported without audio")
+                audio = nil
+            }
+        }
+        self.audio = audio
+        self.warnings = warnings
         guard writer.startWriting() else { throw VideoError.writer(writer.error?.localizedDescription ?? "startWriting") }
         writer.startSession(atSourceTime: .zero)
+        try audio?.start()
 
         var cache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
@@ -265,25 +287,34 @@ public final class VideoWriter {
         return (buffer, CVMetalTextureGetTexture(tex)!, tex)
     }
 
+    /// Waiting longer than this for either input is a stall, reported rather than waited out.
+    static let stallLimit: TimeInterval = 10
+
     public func append(_ buffer: CVPixelBuffer, at time: CMTime) throws {
+        let deadline = Date().addingTimeInterval(Self.stallLimit)
         while !input.isReadyForMoreMediaData {
             if writer.status == .failed { throw VideoError.writer(writer.error?.localizedDescription ?? "failed") }
+            try audio?.pump()   // the writer may be waiting for audio to interleave
+            if Date() > deadline { throw VideoError.writer("video input stalled for \(Int(Self.stallLimit)) s at \(time.seconds) s") }
             Thread.sleep(forTimeInterval: 0.002)
         }
         guard adaptor.append(buffer, withPresentationTime: time) else {
             throw VideoError.writer(writer.error?.localizedDescription ?? "append failed at \(time.seconds) s")
         }
+        try audio?.pump()
     }
 
     /// Abandon the file. Only ever called on a file this writer created
     /// (`init` refuses an existing path), so removing it removes nothing else.
     public func cancel() {
+        audio?.cancel()
         writer.cancelWriting()
         try? FileManager.default.removeItem(at: writer.outputURL)
     }
 
     public func finish() throws {
         input.markAsFinished()
+        try audio?.drain { writer.status == .failed ? VideoError.writer(writer.error?.localizedDescription ?? "failed") : nil }
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
         done.wait()

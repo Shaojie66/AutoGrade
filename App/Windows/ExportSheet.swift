@@ -13,6 +13,11 @@ struct ExportSheet: View {
             }
             .pickerStyle(.segmented)
             Toggle(L(S.alsoCubes), isOn: $project.exportCubes)
+            Toggle(L(S.keepAudio), isOn: $project.exportAudio)
+                .disabled(!(project.summary?.hasAudio ?? false))
+            if !(project.summary?.hasAudio ?? false) {
+                Text(L(S.noAudioInSource)).font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 Spacer()
                 Button(L(S.cancel)) { project.showingExport = false }.keyboardShortcut(.cancelAction)

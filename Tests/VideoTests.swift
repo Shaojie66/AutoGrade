@@ -81,8 +81,10 @@ final class VideoTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }   // test's own temp directory
         let out = dir.appendingPathComponent("graded.mov")
-        let times = try engine.render(Fixtures.url("synthetic_shots.mp4"), analysis: analysis, luts: analysis.luts, to: out)
-        XCTAssertEqual(times.frames, 90)
+        let result = try engine.render(Fixtures.url("synthetic_shots.mp4"), analysis: analysis, luts: analysis.luts, to: out)
+        XCTAssertEqual(result.times.frames, 90)
+        XCTAssertNil(result.audioPackets, "the source has no audio")
+        XCTAssertTrue(result.warnings.isEmpty, "\(result.warnings)")
 
         let check = try VideoReader(url: out, device: metal.device)
         var frames = 0

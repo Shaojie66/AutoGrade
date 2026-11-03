@@ -15,6 +15,8 @@ Contents
                 upstream's uniform LUT kernel — bake + average + apply at 65^3
   video         synthetic_shots.mp4: 3 synthetic shots (cuts at 30, 60), bt709
                 synthetic_vfr.mp4: variable frame rate (every 7th frame dropped)
+                synthetic_av.mp4: 3 s testsrc2 + 10 s 440 Hz AAC (audio passthrough)
+                synthetic_av_880.mp4: the same video + 10 s 880 Hz (audio that must not match)
                 synthetic_f15_{y,cb,cr}: decoder planes of frame 15
                 synthetic_f15_rgb: those planes through the YUV->RGB convention
   manifest.json shapes, dtypes, sha256, and the expected shot list
@@ -116,6 +118,20 @@ def make_vfr(path):
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
            "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_av(path, hz=440):
+    """3 s of testsrc2 with a mono AAC sine 7 s longer than the video. The writer
+    takes up to ~7 s of audio ahead of the video (measured 2026-11-03), so only a
+    tail this long makes the drain after the last frame necessary (CLAUDE.md 导出:
+    copied whole, not trimmed). Same video bytes for every `hz`."""
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30,trim=duration=3",
+           "-f", "lavfi", "-i", f"sine=frequency={hz}:sample_rate=48000:duration=10",
+           "-map", "0:v", "-map", "1:a", "-pix_fmt", "yuv420p",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-c:a", "aac", "-b:a", "96k", "-ac", "1", "-flags:a", "+bitexact", "-fflags", "+bitexact", str(path))
 
 
 def frame_times(path):
@@ -239,6 +255,14 @@ def generate(dest: Path):
     vfr_times = frame_times(vfr)
     m.record("synthetic_vfr.mp4", vfr, file=vfr.name, dtype="h264", shape=[len(vfr_times), 180, 320],
              note="testsrc2 2 s, every 7th frame dropped, variable frame rate")
+    av = dest / "synthetic_av.mp4"
+    make_av(av)
+    m.record("synthetic_av.mp4", av, file=av.name, dtype="h264+aac", shape=[90, 180, 320],
+             note="testsrc2 3 s + 440 Hz mono AAC 10 s")
+    av880 = dest / "synthetic_av_880.mp4"
+    make_av(av880, hz=880)
+    m.record("synthetic_av_880.mp4", av880, file=av880.name, dtype="h264+aac", shape=[90, 180, 320],
+             note="the same video as synthetic_av + 880 Hz mono AAC 10 s")
     m.write(generator="research/make_fixtures.py", upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
             torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times)
     print(f"synthetic shots: {expected}")

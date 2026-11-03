@@ -376,6 +376,30 @@
       "sha256": "99c3ba42dea66c5571f56f1912225eca5ae93f316552b3bbbfa0793334118a0d",
       "bytes": 970341
     },
+    "synthetic_av.mp4": {
+      "file": "synthetic_av.mp4",
+      "dtype": "h264+aac",
+      "shape": [
+        90,
+        180,
+        320
+      ],
+      "note": "testsrc2 3 s + 440 Hz mono AAC 10 s",
+      "sha256": "6dfc5bbcaba9d2a853c9efa493c9c59280d09877b5a1cc429b1fa07b2dfb24cf",
+      "bytes": 246148
+    },
+    "synthetic_av_880.mp4": {
+      "file": "synthetic_av_880.mp4",
+      "dtype": "h264+aac",
+      "shape": [
+        90,
+        180,
+        320
+      ],
+      "note": "the same video as synthetic_av + 880 Hz mono AAC 10 s",
+      "sha256": "9869238046722945a111696fb63686076df86b82165d2ebeeb02a1007d610122",
+      "bytes": 246146
+    },
     "synthetic_f15_cb": {
       "file": "synthetic_f15_cb.u8",
       "dtype": "uint8",

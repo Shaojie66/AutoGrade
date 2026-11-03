@@ -73,6 +73,20 @@ enum S {
     static let exporting = Copy(en: "Exporting", zh: "正在导出")
     static let exportDone = Copy(en: "Export finished", zh: "导出完成")
     static let exportFailed = Copy(en: "Export failed", zh: "导出失败")
+    static let exportCheckFailed = Copy(en: "Export finished, but the check failed", zh: "导出完成，但自检未通过")
+    static let checkingExport = Copy(en: "Checking the export", zh: "正在检查导出文件")
+    static let keepAudio = Copy(en: "Keep the original audio", zh: "保留原音轨")
+    static let noAudioInSource = Copy(en: "This video has no audio track.", zh: "这段视频没有音轨。")
+    /// The export alert: where it went and what the check found. Failures and
+    /// warnings are the Core's own diagnostics, shown as they are.
+    static func exportSummary(_ path: String, frames: Int, sampled: Int, audioPackets: Int?,
+                              failures: [String], warnings: [String]) -> Copy {
+        let notes = (warnings + failures).map { "\n• \($0)" }.joined()
+        let en = audioPackets.map { "\(frames) frames, audio copied (\($0) packets)" } ?? "\(frames) frames, no audio"
+        let zh = audioPackets.map { "\(frames) 帧，已复制音轨（\($0) 个包）" } ?? "\(frames) 帧，无音轨"
+        return Copy(en: "\(path)\n\nChecked: \(en); \(sampled) frames compared with their grade.\(notes)",
+                    zh: "\(path)\n\n已自检：\(zh)；抽查 \(sampled) 帧，与调色结果比对。\(notes)")
+    }
     static let showInFinder = Copy(en: "Show in Finder", zh: "在访达中显示")
     static let replaceCubesTitle = Copy(en: "Replace existing .cube files?", zh: "替换已有的 .cube 文件？")
     static func replaceCubesBody(_ n: Int) -> Copy {
