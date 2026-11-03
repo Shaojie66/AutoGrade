@@ -13,7 +13,8 @@ struct ExportSheet: View {
             }
             .pickerStyle(.segmented)
             Toggle(L(S.alsoCubes), isOn: $project.exportCubes)
-            Toggle(L(S.keepAudio), isOn: $project.exportAudio)
+            // No audio track: shown unticked as well as disabled, so it never looks like audio will be kept.
+            Toggle(L(S.keepAudio), isOn: (project.summary?.hasAudio ?? false) ? $project.exportAudio : .constant(false))
                 .disabled(!(project.summary?.hasAudio ?? false))
             if !(project.summary?.hasAudio ?? false) {
                 Text(L(S.noAudioInSource)).font(.caption).foregroundStyle(.secondary)
