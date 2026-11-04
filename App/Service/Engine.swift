@@ -442,6 +442,15 @@ actor Engine {
         return Unchecked(value: try Self.image(texture))
     }
 
+    /// What a title suggestion would send for this video: the topic, the current
+    /// subtitles, the length limit for `aspects` at this frame size (CLAUDE.md 封面 / 云端候选).
+    /// The request itself is made by `Project`, off this queue.
+    func titleRequest(topic: String, aspects: [CoverAspect], exclude: [String]) -> TitleRequest? {
+        guard let a = analysis else { return nil }
+        return TitleRequest(topic: topic, cues: cues, aspects: aspects, sourceWidth: a.info.width, sourceHeight: a.info.height,
+                            exclude: exclude)
+    }
+
     nonisolated static func coverNames(source: URL, covers: [(rank: Int, candidate: Cover.Candidate)],
                                        aspects: [CoverAspect], format: CoverFormat) -> [String] {
         let prefix = source.deletingPathExtension().lastPathComponent
