@@ -68,17 +68,19 @@ public enum ExportCheck {
 extension AutoGrader {
     /// Check an export `render` just wrote against the analysis it was made from.
     /// Never touches the file; a failed check is reported, not acted on.
+    /// `expectedHook` sees each sampled frame's expected BGRA bytes before they are
+    /// compared (tests: the expectation must be the export's own bytes).
     public func checkExport(_ output: URL, source: URL, analysis: Analysis, luts: [LUT3D],
-                            render: RenderResult) throws -> ExportReport {
+                            render: RenderResult, expectedHook: ((Int, [UInt8]) -> Void)? = nil) throws -> ExportReport {
         let start = CFAbsoluteTimeGetCurrent()
         var report = ExportReport()
-        try check(output, source: source, analysis: analysis, luts: luts, render: render, into: &report)
+        try check(output, source: source, analysis: analysis, luts: luts, render: render, expectedHook: expectedHook, into: &report)
         report.seconds = CFAbsoluteTimeGetCurrent() - start
         return report
     }
 
     private func check(_ output: URL, source: URL, analysis: Analysis, luts: [LUT3D], render: RenderResult,
-                       into report: inout ExportReport) throws {
+                       expectedHook: ((Int, [UInt8]) -> Void)?, into report: inout ExportReport) throws {
 
         // 1. video samples: every timestamp, without decoding
         let video = try Samples.read(output, .video)
@@ -166,6 +168,7 @@ extension AutoGrader {
             }
             var expected = [UInt8](repeating: 0, count: w * h * 4)
             texture.getBytes(&expected, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+            expectedHook?(index, expected)
 
             let reader = try VideoReader(url: output, device: metal.device, timeRange: analysis.timeRange(first: index, last: index),
                                          frameTimes: analysis.frameTimes, checkingFormat: false)

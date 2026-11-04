@@ -245,6 +245,32 @@ final class EnhanceRenderTests: XCTestCase {
         XCTAssertGreaterThan(gains[1] - gains[0], 2, "strength 1 filters clearly more than 0.5 (measured +9.05 vs +3.45 dB)")
     }
 
+    /// The check's expected picture for a denoised export is the export's own
+    /// bytes: its chain starts at the shot's first frame, not at the preview's
+    /// warm-up (CLAUDE.md 降噪). synthetic_noisy is one 20-frame shot, so the
+    /// sampled frame is 9, one past the warm-up: the two chains differ there.
+    func testExportCheckRecomputesDenoiseExactly() throws {
+        guard EnhanceSettings.denoiseAvailable else { throw XCTSkip("noise reduction needs macOS 26") }
+        let a = try analyze(noisy)
+        XCTAssertEqual(a.shots, [Shot(first: 0, last: 19)])
+        let settings = EnhanceSettings(denoise: 1)
+        var exported: [Int: [UInt8]] = [:]
+        let out = dir.appendingPathComponent("\(UUID()).mov")
+        let result = try engine.render(noisy, analysis: a, luts: a.luts, to: out, enhance: settings,
+                                       frameHook: { i, pb in exported[i] = bgra(pb) })
+        var expected: [Int: [UInt8]] = [:]
+        let report = try engine.checkExport(out, source: noisy, analysis: a, luts: a.luts, render: result,
+                                            expectedHook: { i, bytes in expected[i] = bytes })
+        XCTAssertTrue(report.passed, "\(report.failures)")
+        XCTAssertEqual(Array(expected.keys), [9])
+        XCTAssertTrue(expected[9] == exported[9], "the check's frame 9 is not the export's bytes")
+        // and the preview's chain really is different there, so this test can tell them apart
+        let enhancer = try Enhancer(settings: settings, width: 320, height: 180, kernels: engine.kernels)
+        let targets = try PreviewTargets(kernels: engine.kernels, width: 320, height: 180)
+        try engine.preview(try engine.decodeFrame(noisy, analysis: a, index: 9, enhancer: enhancer), lut: a.luts[0], into: targets)
+        XCTAssertFalse(texture(targets.graded) == exported[9], "preview and export agree at frame 9: the test would not see a wrong chain")
+    }
+
     func testExportCheckCatchesAMissingEnhancement() throws {
         var cases: [(URL, EnhanceSettings)] = [(person, EnhanceSettings(background: .green)),
                                                (person, EnhanceSettings(background: .blur(strength: 1)))]
