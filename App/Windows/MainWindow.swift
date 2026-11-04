@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct MainWindow: View {
     @Bindable var project: Project
     @State private var dropTargeted = false
-    @State private var sidebar = 0               // 0 shots, 1 subtitles
+    @State private var sidebar = 0               // 0 shots, 1 subtitles, 2 covers
 
     var body: some View {
         content
@@ -151,11 +151,16 @@ struct MainWindow: View {
                 Picker("", selection: $sidebar) {
                     Text(L(S.sidebarShots)).tag(0)
                     Text(L(S.sidebarSubtitles)).tag(1)
+                    Text(L(S.sidebarCovers)).tag(2)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .padding(8)
-                if sidebar == 0 { ShotList(project: project) } else { SubtitleList(project: project) }
+                switch sidebar {
+                case 0: ShotList(project: project)
+                case 1: SubtitleList(project: project)
+                default: CoverList(project: project)
+                }
             }
             .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {

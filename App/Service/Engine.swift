@@ -21,6 +21,7 @@ struct Summary: Sendable {
     let reframe: ReframeInfo?
     let subtitles: [SubtitleCue]
     let enhance: EnhanceSettings         // as applied: backgroundShots filled in for the current shots
+    let covers: [Cover.Candidate]?       // after the cover scan, for the current shots (CLAUDE.md 封面)
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -78,6 +79,9 @@ actor Engine {
     private var enhanceChoice = EnhanceSettings()
     private var coverage: [Float]?
     private var enhancer: Enhancer?
+    // covers (CLAUDE.md 封面): the scan is per video; candidates follow the current shots
+    private var coverScan: CoverScan?
+    private var coverTargets: [CoverAspect: CoverTargets] = [:]
     /// Three slots so the slot being drawn is never the one being written.
     private var previewSlots: [PreviewTargets] = []
     private var nextSlot = 0
@@ -119,6 +123,8 @@ actor Engine {
         enhanceChoice = EnhanceSettings()
         coverage = nil
         enhancer = nil
+        coverScan = nil
+        coverTargets = [:]
         previewSlots = try (0..<3).map { _ in
             try PreviewTargets(kernels: core.kernels, width: result.info.width, height: result.info.height)
         }
@@ -366,11 +372,99 @@ actor Engine {
                        },
                        subtitles: cues,
                        enhance: appliedEnhance(),
+                       covers: coverCandidates(),
                        shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
 
     private func noVideo() throws -> Summary { throw VideoError.reader("no video is open") }
+
+    // MARK: covers
+
+    /// One pass over the video (cancellable). Reuses the reframe's subject track,
+    /// or keeps the one detected here for a later reframe.
+    func scanCovers(progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis else { return try noVideo() }
+        if coverScan == nil {
+            let token = control.begin()
+            defer { control.end(token) }
+            let scan = try core.coverScan(source, analysis: a, track: track, cancel: token) { i in
+                progress(Double(i + 1) / Double(a.frameCount))
+            }
+            coverScan = scan
+            if track == nil { track = scan.track }
+        }
+        return summary()
+    }
+
+    private func coverCandidates() -> [Cover.Candidate]? {
+        guard let scan = coverScan, let a = analysis else { return nil }
+        let scores = Cover.scores(scan.features, faces: scan.track.samples, shots: a.shots, frameTimes: a.frameTimes)
+        return Cover.candidates(scores, shots: a.shots, frameTimes: a.frameTimes)
+    }
+
+    /// The cover's exact pixels (the file's, before encoding) at the current
+    /// strengths and enhancements; denoise from the shot's start like the export.
+    private func coverPixels(_ c: Cover.Candidate, aspect: CoverAspect) throws -> (bgra: [UInt8], width: Int, height: Int) {
+        guard let source, let a = analysis, let scan = coverScan else { throw VideoError.reader("no cover scan") }
+        let frame = try core.decodeFrame(source, analysis: a, index: c.frame, enhancer: enhancer, exact: true)
+        let (sw, sh) = (a.info.width, a.info.height)
+        let targets: CoverTargets
+        if let t = coverTargets[aspect] {
+            targets = t
+        } else {
+            targets = try CoverTargets(kernels: core.kernels, sourceWidth: sw, sourceHeight: sh, aspect: aspect)
+            coverTargets[aspect] = targets
+        }
+        let centre = Cover.center(frame: c.frame, track: scan.track, shot: a.shots[c.shot])
+        let (w, h) = aspect.outputSize(sourceWidth: a.info.width, sourceHeight: a.info.height)
+        return (try core.renderCover(frame, lut: finals[c.shot], aspect: aspect, center: centre, into: targets), w, h)
+    }
+
+    /// The cover as it will be written, tagged sRGB like the file (CLAUDE.md 封面 / 文件).
+    func coverPreview(_ c: Cover.Candidate, aspect: CoverAspect) throws -> Unchecked<CGImage> {
+        let (bgra, w, h) = try coverPixels(c, aspect: aspect)
+        return Unchecked(value: try Self.image(bgra: bgra, width: w, height: h, space: CGColorSpace.sRGB))
+    }
+
+    /// A small graded picture of one frame for the cover list (an approximation, like the shot list's).
+    func thumbnail(frame index: Int, shot k: Int, width: Int = 160) throws -> Unchecked<CGImage> {
+        guard let source, let a = analysis, k < finals.count else { throw VideoError.reader("no such frame") }
+        let texture = try core.thumbnail(try core.decodeFrame(source, analysis: a, index: index), lut: finals[k], width: width)
+        return Unchecked(value: try Self.image(texture))
+    }
+
+    nonisolated static func coverNames(source: URL, covers: [(rank: Int, candidate: Cover.Candidate)],
+                                       aspects: [CoverAspect], format: CoverFormat) -> [String] {
+        let prefix = source.deletingPathExtension().lastPathComponent
+        return covers.flatMap { item in
+            aspects.map { Cover.fileName(prefix: prefix, rank: item.rank, shot: item.candidate.shot, frame: item.candidate.frame,
+                                         aspect: $0, format: format) }
+        }
+    }
+
+    /// Write the chosen covers into `directory` and check each (CLAUDE.md 封面 / 写完自检).
+    /// Replacing existing files was confirmed in the interface. Cancellable between files.
+    func exportCovers(_ covers: [(rank: Int, candidate: Cover.Candidate)], aspects: [CoverAspect], format: CoverFormat,
+                      to directory: URL, progress: @escaping @Sendable (Double) -> Void) throws -> [CoverCheck] {
+        guard let source else { throw VideoError.reader("no video is open") }
+        let token = control.begin()
+        defer { control.end(token) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let names = Self.coverNames(source: source, covers: covers, aspects: aspects, format: format)
+        var checks: [CoverCheck] = [], n = 0
+        for item in covers {
+            for aspect in aspects {
+                if token.isCancelled { throw Cancelled() }
+                let (bgra, w, h) = try coverPixels(item.candidate, aspect: aspect)
+                checks.append(try CoverWriter.write(bgra: bgra, width: w, height: h, to: directory.appendingPathComponent(names[n]),
+                                                    format: format, overwrite: true))
+                n += 1
+                progress(Double(n) / Double(names.count))
+            }
+        }
+        return checks
+    }
 
     // MARK: preview
 
@@ -411,9 +505,14 @@ actor Engine {
         let row = t.width * 4
         var bytes = [UInt8](repeating: 0, count: row * t.height)
         t.getBytes(&bytes, bytesPerRow: row, from: MTLRegionMake2D(0, 0, t.width, t.height), mipmapLevel: 0)
-        guard let space = CGColorSpace(name: CGColorSpace.itur_709),
+        return try image(bgra: bytes, width: t.width, height: t.height, space: CGColorSpace.itur_709)
+    }
+
+    private static func image(bgra bytes: [UInt8], width: Int, height: Int, space name: CFString) throws -> CGImage {
+        let row = width * 4
+        guard let space = CGColorSpace(name: name),
               let provider = CGDataProvider(data: Data(bytes) as CFData),
-              let image = CGImage(width: t.width, height: t.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: row,
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: row,
                                   space: space,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue
                                                            | CGImageAlphaInfo.noneSkipFirst.rawValue),

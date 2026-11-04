@@ -76,6 +76,42 @@ enum S {
     static let deleteCue = Copy(en: "Delete", zh: "删除")
     static let sidebarShots = Copy(en: "Shots", zh: "镜头")
     static let sidebarSubtitles = Copy(en: "Subtitles", zh: "字幕")
+
+    // covers (CLAUDE.md 封面)
+    static let sidebarCovers = Copy(en: "Covers", zh: "封面")
+    static let findCovers = Copy(en: "Find Cover Frames", zh: "挑选封面帧")
+    static let coversHint = Copy(en: "Picks each shot’s sharpest, best-exposed frame, preferring faces and still moments. Covers are graded like the export, without subtitles.",
+                                 zh: "从每个镜头里挑出最清晰、曝光最好的一帧，优先有人脸、画面稳定的时刻。封面调色与导出一致，不带字幕。")
+    static let findingCovers = Copy(en: "Finding cover frames", zh: "正在挑选封面帧")
+    static let coversFailed = Copy(en: "Couldn’t make the covers", zh: "无法生成封面")
+    static func coverRow(rank: Int, shot: Int, frame: Int) -> Copy {
+        Copy(en: "#\(rank) · Shot \(shot) · Frame \(frame)", zh: "第 \(rank) 名 · 镜头 \(shot) · 第 \(frame) 帧")
+    }
+    static func coverScore(_ score: Double) -> Copy {
+        let t = String(format: "%.2f", score)
+        return Copy(en: "Score \(t)", zh: "得分 \(t)")
+    }
+    static let coverShortShots = Copy(en: "Shots shorter than 1 s are not considered.", zh: "短于 1 秒的镜头不参加评选。")
+    static let coverInclude = Copy(en: "Export this cover", zh: "导出这张封面")
+    static let coverShapes = Copy(en: "Shapes", zh: "画幅")
+    static let coverOriginal = Copy(en: "Original", zh: "原画幅")
+    static let coverFormat = Copy(en: "Format", zh: "格式")
+    static let coverPreviewTitle = Copy(en: "Preview — the exported pixels", zh: "预览：即导出的像素")
+    static let coverSelectHint = Copy(en: "Select a frame to preview its cover.", zh: "选中一帧即可预览封面。")
+    static let exportCoversButton = Copy(en: "Export Covers…", zh: "导出封面…")
+    static let chooseCoverFolder = Copy(en: "Choose a folder for the covers", zh: "选择存放封面的文件夹")
+    static let exportingCovers = Copy(en: "Exporting covers", zh: "正在导出封面")
+    static let replaceCoversTitle = Copy(en: "Replace existing covers?", zh: "替换已有的封面？")
+    static func replaceCoversBody(_ n: Int) -> Copy {
+        Copy(en: "\(n) file(s) with the same names are already in this folder.", zh: "这个文件夹里已有 \(n) 个同名文件。")
+    }
+    static let coversExported = Copy(en: "Covers exported", zh: "封面已导出")
+    static let coversCheckFailed = Copy(en: "Covers exported, but a check failed", zh: "封面已导出，但自检未通过")
+    static func coversSummary(_ path: String, count: Int, failures: [String]) -> Copy {
+        let notes = failures.map { "\n• \($0)" }.joined()
+        return Copy(en: "\(path)\n\n\(count) file(s) written and read back.\(notes)",
+                    zh: "\(path)\n\n已写入 \(count) 个文件，并逐一读回核对。\(notes)")
+    }
     static let exportSRT = Copy(en: "Also write an SRT file", zh: "同时导出 SRT 文件")
     static let burnSubtitlesOption = Copy(en: "Burn subtitles into the picture", zh: "把字幕烧录进画面")
     static func replaceSRTTitle(_ name: String) -> Copy { Copy(en: "Replace \(name)?", zh: "替换 \(name)？") }
