@@ -18,6 +18,7 @@ Contents
                 synthetic_av.mp4: 3 s testsrc2 + 10 s 440 Hz AAC (audio passthrough)
                 synthetic_av_880.mp4: the same video + 10 s 880 Hz (audio that must not match)
                 synthetic_subject.mp4: a disk moving left to right over noise (subject detection)
+                synthetic_ntsc.mp4: 29.97 fps with a 1/30000 time scale (export time stamps)
   crop        crop_*: crop-and-resize (reframe) cases, see CROP_CASES and the manifest
   overlay     overlay_rgba.u8 + overlay_*: subtitle compositing (premultiplied over)
   background  bg_image / bg_mask + bg_blur / bg_colour: person-mask compositing;
@@ -113,6 +114,17 @@ def make_synthetic(path):
     graph = ";".join(f"{s},trim=duration=1,setpts=PTS-STARTPTS[v{i}]" for i, s in enumerate(sources))
     graph += ";[v0][v1][v2]concat=n=3:v=1:a=0,format=yuv420p[out]"
     ffmpeg("-filter_complex", graph, "-map", "[out]",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_ntsc(path):
+    """1 s of testsrc2 at 30000/1001 fps with a 1/30000 track time scale, as DJI and
+    GoPro write it: 1001/30000 s is not a multiple of 1/600 (the writer's default)."""
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30000/1001,trim=end_frame=30",
+           "-pix_fmt", "yuv420p", "-video_track_timescale", "30000",
            "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
@@ -569,6 +581,10 @@ def generate(dest: Path):
     make_subject(subject)
     m.record("synthetic_subject.mp4", subject, file=subject.name, dtype="h264", shape=[90, 180, 320],
              note="disk r=20 at x = 60 + 60 t, y = 90, over grey noise")
+    ntsc = dest / "synthetic_ntsc.mp4"
+    make_ntsc(ntsc)
+    m.record("synthetic_ntsc.mp4", ntsc, file=ntsc.name, dtype="h264", shape=[30, 180, 320],
+             note="testsrc2, 30 frames at 30000/1001 fps, time scale 30000")
 
     # crop-and-resize: the numpy reference must equal PyTorch on whole frames first
     sources = {"demo_resized256": tensors["demo"][0], "gym_a_in": tensors["gym_a"][0]}

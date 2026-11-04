@@ -372,7 +372,8 @@ public final class AutoGrader {
         let size = reframe?.outputSize ?? (reader.info.width, reader.info.height)
         precondition(subtitles == nil || (subtitles!.width == size.0 && subtitles!.height == size.1), "subtitles sized for the output")
         let writer = try VideoWriter(url: output, width: size.0, height: size.1,
-                                     codec: codec, device: metal.device, audioFrom: audio ? url : nil)
+                                     codec: codec, device: metal.device, audioFrom: audio ? url : nil,
+                                     timeScale: reader.info.timeScale)
         do {
             let scratch = (try kernels.makeImage(width: reader.info.width, height: reader.info.height),
                            try kernels.makeImage(width: reader.info.width, height: reader.info.height))
