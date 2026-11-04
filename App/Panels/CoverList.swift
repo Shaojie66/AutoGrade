@@ -17,8 +17,15 @@ struct CoverList: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .frame(minHeight: 140)
                 Divider()
-                controls.padding(10)
+                // Scrolls instead of growing: unrolled, the title and candidate controls are taller
+                // than the sidebar, and a fixed-height stack made the window grow off screen
+                // (2026-11-04, the owner could not reach "Another Batch").
+                ScrollView {
+                    controls.padding(10)
+                }
+                .frame(minHeight: 160, maxHeight: 420)
             }
         } else {
             VStack(spacing: 12) {

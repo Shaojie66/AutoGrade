@@ -161,6 +161,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
       - 设置窗口加一节“封面标题候选”：开关“使用 DeepSeek 生成标题候选”（默认关，存 UserDefaults `titleSuggestions`，不是密钥）；key 用安全输入框（`SecureField`）输入，“保存”写钥匙串、“删除”从钥匙串移除，只显示“已保存 / 未保存”，**从不把 key 显示回界面**；说明文字写明只发文字、费用记在主人自己的 DeepSeek 账户。开关与 key 由 `App/Model/TitleSuggestionSettings.swift`（像 `Localization` 一样的共享可观察对象，UserDefaults 与钥匙串可替换）持有，设置窗口与封面页共用。
       - 钥匙串读写经 `SecretStore`（`App/Service/SecretStore.swift`），实际实现是 `KeychainSecretStore`（generic password，service `dev.chenshaojie.autograde.deepseek`，account `api-key`）；AppTests 用内存实现，不碰真钥匙串。
       - 封面页（开关打开且已保存 key 时）：输入框“给候选的描述（可不填）”；“生成候选”“换一批”按钮；按钮下写明“将发送：描述 N 字、字幕 M 字（不发画面）”；只有描述没有字幕时显示补充提示；候选列成按钮，点一下填进“标题”框（可再改），旁边写“请核对内容后再用”。开关关着时只显示一行“可在设置里开启 DeepSeek 标题候选”。打开新视频时清空候选与“已给过”。
+      - 侧栏下半部分（画幅、标题、版式、格式、候选、导出）放在可滚动区域里（最小 160、最大 420 点），列表至少 140 点：2026-11-04 主人亲手试时，展开“封面标题候选”把整个窗口撑高到屏幕外，点不到“换一批”。改成可滚动后，主人亲手确认能点到“换一批”（同日，Pro，Release 构建）。
       - 联网请求不在 `Engine`（它的串行队列还要做预览与导出）里等；`Engine` 只按当前字幕与画面尺寸拼 `TitleRequest`，请求由 `Project` 用 `TitleSuggester` 发出，`TitleTransport` 可替换。报错显示 `TitleSuggestionError.description`（不含 key）。
       - AppTests（不连网）：默认关时不发请求；开了没 key 时不发并提示；开了有 key 时请求带对描述、字幕、字数上限与 key（只在 Authorization 头），“换一批”带上已给过的，点候选会填进标题并让预览带上标题；401 的报错不含 key；key 不进 UserDefaults。
     - **测试不连网**：发送请求经一个可替换的 `TitleTransport`，`TitleSuggesterTests` 用假的回包核对请求内容（地址、模型、关思考、JSON 模式、`max_tokens`、提示里有 “json”、字幕截到 2000 字、没有画面标签、key 只出现在 `Authorization` 头里）、过滤规则、重试次数与报错文字。真连网只在主人用自己的 key 时发生。
