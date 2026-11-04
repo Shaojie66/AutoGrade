@@ -26,6 +26,11 @@ targets:
         buildPhase: sources
       - path: Resources/Models/AdaInt-LICENSE.txt
         buildPhase: resources
+      # subtitles and cover titles (CLAUDE.md 字幕 / 许可与素材): registered for this process only
+      - path: Resources/Fonts/SourceHanSansCN-Bold.otf
+        buildPhase: resources
+      - path: licenses/SourceHanSans-LICENSE.txt
+        buildPhase: resources
     preBuildScripts:
       - name: Build metallib (safe math)
         script: '"$SRCROOT/Tools/build-metallib.sh" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/AutoGrade.metallib"'

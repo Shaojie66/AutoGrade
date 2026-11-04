@@ -6,7 +6,22 @@ import Foundation
 /// (8% of the font size), a soft shadow, premultiplied sRGB RGBA8, placed for
 /// the output frame. Drawn once per cue; `SubtitleBurn` caches the result.
 public enum SubtitleRenderer {
-    public static let fontName = "PingFangSC-Semibold"
+    /// Source Han Sans CN Bold, shipped in the framework (SIL OFL 1.1; CLAUDE.md 字幕 / 许可与素材).
+    public static let fontName = "SourceHanSansCN-Bold"
+    public static let fontFile = "SourceHanSansCN-Bold.otf"
+
+    /// Registers the bundled font for this process once (never system-wide).
+    /// True when `fontName` resolves to the bundled font, not a fallback.
+    public static let fontRegistered: Bool = {
+        guard let url = Bundle(for: SubtitleBurn.self).url(forResource: fontFile, withExtension: nil) else { return false }
+        var error: Unmanaged<CFError>?
+        if !CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
+            // already registered by an earlier call in this process is fine
+            if let e = error?.takeRetainedValue(), CFErrorGetCode(e) != CTFontManagerError.alreadyRegistered.rawValue { return false }
+        }
+        let font = CTFontCreateWithName(fontName as CFString, 12, nil)
+        return CTFontCopyPostScriptName(font) as String == fontName
+    }()
     public static let sizeFraction: CGFloat = 0.055         // of height (wide frames) or width (vertical)
     public static let bottomMargin: CGFloat = 0.08          // wide frames: bottom edge above the frame's
     public static let verticalCentre: CGFloat = 0.70        // 9:16: centre, clear of the platforms' UI
@@ -99,6 +114,7 @@ public enum SubtitleRenderer {
     }
 
     static func layout(_ text: [String], size: CGFloat) -> Layout {
+        _ = fontRegistered
         let font = CTFontCreateWithName(fontName as CFString, size, nil)
         let fill: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
