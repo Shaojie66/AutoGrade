@@ -6,6 +6,7 @@ public enum MetalError: Error, CustomStringConvertible {
     case missingLibrary
     case missingFunction(String)
     case commandFailed(String)
+    case badArgument(String)
 
     public var description: String {
         switch self {
@@ -13,6 +14,7 @@ public enum MetalError: Error, CustomStringConvertible {
         case .missingLibrary: "AutoGrade.metallib is not in the AutoGradeCore bundle (did the pre-build phase run?)"
         case .missingFunction(let name): "kernel \(name) is not in AutoGrade.metallib"
         case .commandFailed(let message): "Metal command failed: \(message)"
+        case .badArgument(let message): "bad kernel argument: \(message)"
         }
     }
 }
@@ -55,7 +57,12 @@ public final class MetalContext: @unchecked Sendable {
         guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else {
             throw MetalError.commandFailed("could not create a command buffer")
         }
-        try body(encoder)
+        do {
+            try body(encoder)
+        } catch {
+            encoder.endEncoding()   // an encoder left open aborts the process; end it, then report
+            throw error
+        }
         encoder.endEncoding()
         buffer.commit()
         buffer.waitUntilCompleted()

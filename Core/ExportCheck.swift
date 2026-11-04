@@ -74,8 +74,9 @@ extension AutoGrader {
         // 2. size, codec, BT.709 tags
         if let format = video.format {
             let size = CMVideoFormatDescriptionGetDimensions(format)
-            if Int(size.width) != analysis.info.width || Int(size.height) != analysis.info.height {
-                report.failures.append("size \(size.width)x\(size.height), expected \(analysis.info.width)x\(analysis.info.height)")
+            let expectedSize = render.reframe?.outputSize ?? (analysis.info.width, analysis.info.height)
+            if Int(size.width) != expectedSize.0 || Int(size.height) != expectedSize.1 {
+                report.failures.append("size \(size.width)x\(size.height), expected \(expectedSize.0)x\(expectedSize.1)")
             }
             let codec = CMFormatDescriptionGetMediaSubType(format)
             let want = render.codec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_AppleProRes422
@@ -123,13 +124,24 @@ extension AutoGrader {
             report.failures.append("frames not sampled: timestamps do not match")
             return
         }
-        let w = analysis.info.width, h = analysis.info.height
-        let targets = try PreviewTargets(kernels: kernels, width: w, height: h)
+        let (w, h) = render.reframe?.outputSize ?? (analysis.info.width, analysis.info.height)
+        let targets = try PreviewTargets(kernels: kernels, width: analysis.info.width, height: analysis.info.height)
+        let reframed = try render.reframe.map {
+            try ReframeTargets(kernels: kernels, sourceWidth: analysis.info.width, sourceHeight: analysis.info.height, aspect: $0.aspect)
+        }
         for k in ExportCheck.sampledShots(analysis.shots.count) {
             let shot = analysis.shots[k], index = (shot.first + shot.last) / 2
-            try preview(try decodeFrame(source, analysis: analysis, index: index), lut: luts[k], into: targets)
+            let sourceFrame = try decodeFrame(source, analysis: analysis, index: index)
+            let texture: MTLTexture
+            if let path = render.reframe, let reframed {
+                try previewReframed(sourceFrame, lut: luts[k], path: path, into: reframed)
+                texture = reframed.output
+            } else {
+                try preview(sourceFrame, lut: luts[k], into: targets)
+                texture = targets.graded
+            }
             var expected = [UInt8](repeating: 0, count: w * h * 4)
-            targets.graded.getBytes(&expected, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+            texture.getBytes(&expected, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
 
             let reader = try VideoReader(url: output, device: metal.device, timeRange: analysis.timeRange(first: index, last: index),
                                          frameTimes: analysis.frameTimes, checkingFormat: false)

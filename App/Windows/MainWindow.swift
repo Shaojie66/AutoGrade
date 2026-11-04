@@ -14,6 +14,19 @@ struct MainWindow: View {
                     Button { project.openPanel() } label: { Label(L(S.open), systemImage: "folder") }
                     Button { project.reanalyze() } label: { Label(L(S.reanalyze), systemImage: "arrow.clockwise") }
                         .disabled(!project.canEdit)
+                    Menu {
+                        Picker(L(S.aspect), selection: Binding(get: { project.reframe?.aspect },
+                                                               set: { project.setAspect($0) })) {
+                            Text(L(S.aspectOriginal)).tag(Aspect?.none)
+                            Text(L(S.aspectVertical)).tag(Aspect?.some(.vertical9x16))
+                            Text(L(S.aspectHorizontal)).tag(Aspect?.some(.horizontal16x9))
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label(L(S.aspect), systemImage: "crop")
+                    }
+                    .disabled(!project.canEdit)
+                    .accessibilityLabel(L(S.aspect))
                     if project.availableStyles.count > 1 {
                         Menu {
                             Section(L(S.applyToAllShots)) {

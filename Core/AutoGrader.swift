@@ -30,6 +30,16 @@ public struct RenderResult: Sendable {
     /// Audio packets copied; nil when the output has no audio track.
     public let audioPackets: Int?
     public let warnings: [String]
+    /// The crop each frame was reframed with; nil = the source's own frame.
+    public let reframe: CropPath?
+
+    public init(times: StageTimes, codec: OutputCodec, audioPackets: Int?, warnings: [String], reframe: CropPath?) {
+        self.times = times
+        self.codec = codec
+        self.audioPackets = audioPackets
+        self.warnings = warnings
+        self.reframe = reframe
+    }
 }
 
 /// Result of pass 1, and the state cut editing works on. Preview and export
@@ -69,6 +79,22 @@ public struct Analysis {
 
 /// Preview targets for one video size, reused across frames: the ungraded and
 /// graded BGRA8 textures the display samples, plus float scratch.
+/// Targets for the reframed ("成片") preview: the output-size BGRA8 texture
+/// the display samples, plus float scratch at source and output size.
+public final class ReframeTargets {
+    public let output: MTLTexture
+    let cropped: PlanarImage
+    let scratch: (rgb: PlanarImage, graded: PlanarImage)
+
+    public init(kernels: GradeKernels, sourceWidth: Int, sourceHeight: Int, aspect: Aspect) throws {
+        let (w, h) = aspect.outputSize
+        output = try kernels.makeDisplayTexture(width: w, height: h)
+        cropped = try kernels.makeImage(width: w, height: h)
+        scratch = (try kernels.makeImage(width: sourceWidth, height: sourceHeight),
+                   try kernels.makeImage(width: sourceWidth, height: sourceHeight))
+    }
+}
+
 public final class PreviewTargets {
     public let original: MTLTexture
     public let graded: MTLTexture
@@ -277,6 +303,16 @@ public final class AutoGrader {
         }
     }
 
+    /// The reframed frame `index` of `path` into `targets` — the same encode
+    /// path a reframed render uses (CLAUDE.md 重构图: 成片 = export bytes).
+    public func previewReframed(_ frame: DecodedFrame, lut: LUT3D, path: CropPath, into targets: ReframeTargets) throws {
+        try metal.run { enc in
+            try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut, scratch: targets.scratch,
+                                         crop: path.origins[frame.index], length: path.length, cropped: targets.cropped,
+                                         output: targets.output)
+        }
+    }
+
     /// A small graded picture for the shot list: resized *before* grading, so it
     /// is an approximation of the frame, not the frame (that is `preview`).
     public func thumbnail(_ frame: DecodedFrame, lut: LUT3D, width: Int) throws -> MTLTexture {
@@ -296,25 +332,35 @@ public final class AutoGrader {
     /// error or cancellation the partial output — a file this call created — is
     /// removed. `frameHook` sees each graded BGRA buffer before it is appended (tests).
     public func render(_ url: URL, analysis: Analysis, luts: [LUT3D], to output: URL, codec: OutputCodec = .hevc,
-                       audio: Bool = true, cancel: CancelToken? = nil, progress: ((Int) -> Void)? = nil,
+                       audio: Bool = true, reframe: CropPath? = nil, cancel: CancelToken? = nil,
+                       progress: ((Int) -> Void)? = nil,
                        frameHook: ((Int, CVPixelBuffer) -> Void)? = nil) throws -> RenderResult {
         precondition(luts.count == analysis.shots.count)
+        precondition(reframe == nil || reframe!.origins.count == analysis.frameCount)
         let reader = try VideoReader(url: url, device: metal.device)
-        let writer = try VideoWriter(url: output, width: reader.info.width, height: reader.info.height,
+        let size = reframe?.outputSize ?? (reader.info.width, reader.info.height)
+        let writer = try VideoWriter(url: output, width: size.0, height: size.1,
                                      codec: codec, device: metal.device, audioFrom: audio ? url : nil)
         do {
             let scratch = (try kernels.makeImage(width: reader.info.width, height: reader.info.height),
                            try kernels.makeImage(width: reader.info.width, height: reader.info.height))
+            let cropped = try reframe.map { _ in try kernels.makeImage(width: size.0, height: size.1) }
             var times = StageTimes()
             var clock = Clock()
             while let frame = try reader.next() {
                 if cancel?.isCancelled == true { throw Cancelled() }
                 times.decode += clock.lap()
                 let (pixels, texture, textureRef) = try writer.makeFrame()
+                let lut = luts[analysis.shotIndex(forFrame: frame.index)]
                 try metal.run { enc in
-                    try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma,
-                                                 lut: luts[analysis.shotIndex(forFrame: frame.index)],
-                                                 scratch: scratch, graded: texture, original: nil)
+                    if let reframe, let cropped {
+                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
+                                                     scratch: scratch, crop: reframe.origins[frame.index],
+                                                     length: reframe.length, cropped: cropped, output: texture)
+                    } else {
+                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
+                                                     scratch: scratch, graded: texture, original: nil)
+                    }
                 }
                 withExtendedLifetime(textureRef) {}
                 times.apply += clock.lap()
@@ -329,7 +375,8 @@ public final class AutoGrader {
             guard times.frames == analysis.frameCount else {
                 throw VideoError.reader("render decoded \(times.frames) frames, analysis saw \(analysis.frameCount)")
             }
-            return RenderResult(times: times, codec: codec, audioPackets: writer.audioPackets, warnings: writer.warnings)
+            return RenderResult(times: times, codec: codec, audioPackets: writer.audioPackets, warnings: writer.warnings,
+                                reframe: reframe)
         } catch {
             writer.cancel()
             throw error

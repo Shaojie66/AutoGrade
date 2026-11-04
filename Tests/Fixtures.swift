@@ -18,11 +18,21 @@ enum Fixtures {
         let sha256: String
     }
 
+    struct CropCase: Decodable {
+        let name: String
+        let input: String
+        let transposed: Bool
+        let origin: [Float]
+        let length: [Float]
+        let output: [Int]
+    }
+
     struct Manifest: Decodable {
         let files: [String: Entry]
         let synthetic_shots: [[Int]]
         let cut_threshold: Float
         let vfr_frame_times: [Double]
+        let crop_cases: [CropCase]
     }
 
     static let manifest: Manifest = {

@@ -25,16 +25,29 @@ struct Transport: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1).fixedSize()
                 }
-                Spacer()
-                // one line each: the 2026-11-02 walkthrough caught the merge label wrapping
-                Button(L(S.addCut)) { project.addCut() }.disabled(!project.canAddCut)
-                    .lineLimit(1).fixedSize()
-                Button(L(S.removeCut)) { project.removeCut() }.disabled(!project.canRemoveCut)
-                    .lineLimit(1).fixedSize()
+                Spacer(minLength: 8)
+                // Text buttons when they fit, icons otherwise: in English at the minimum
+                // width the four-way compare control was cut off (2026-11-04, Air walkthrough).
+                // One line each: the 2026-11-02 walkthrough caught the merge label wrapping.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        Button(L(S.addCut)) { project.addCut() }.disabled(!project.canAddCut)
+                            .lineLimit(1).fixedSize()
+                        Button(L(S.removeCut)) { project.removeCut() }.disabled(!project.canRemoveCut)
+                            .lineLimit(1).fixedSize()
+                    }
+                    HStack(spacing: 12) {
+                        Button { project.addCut() } label: { Image(systemName: "scissors") }
+                            .disabled(!project.canAddCut).help(L(S.addCut)).accessibilityLabel(L(S.addCut))
+                        Button { project.removeCut() } label: { Image(systemName: "arrow.triangle.merge") }
+                            .disabled(!project.canRemoveCut).help(L(S.removeCut)).accessibilityLabel(L(S.removeCut))
+                    }
+                }
                 Picker("", selection: $project.compare) {
                     Text(L(S.compareSplit)).tag(CompareMode.split)
                     Text(L(S.compareOriginal)).tag(CompareMode.original)
                     Text(L(S.compareGraded)).tag(CompareMode.graded)
+                    if project.reframe != nil { Text(L(S.compareOutput)).tag(CompareMode.output) }
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()

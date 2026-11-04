@@ -17,6 +17,8 @@ Contents
                 synthetic_vfr.mp4: variable frame rate (every 7th frame dropped)
                 synthetic_av.mp4: 3 s testsrc2 + 10 s 440 Hz AAC (audio passthrough)
                 synthetic_av_880.mp4: the same video + 10 s 880 Hz (audio that must not match)
+                synthetic_subject.mp4: a disk moving left to right over noise (subject detection)
+  crop        crop_*: crop-and-resize (reframe) cases, see CROP_CASES and the manifest
                 synthetic_f15_{y,cb,cr}: decoder planes of frame 15
                 synthetic_f15_rgb: those planes through the YUV->RGB convention
   manifest.json shapes, dtypes, sha256, and the expected shot list
@@ -120,6 +122,19 @@ def make_vfr(path):
            "-an", "-fflags", "+bitexact", str(path))
 
 
+def make_subject(path):
+    """A bright disk (radius 20) moving left to right over static grey noise,
+    320x180, 3 s at 30 fps: centre x = 60 + 60 t px, y = 90 (subject detection)."""
+    ffmpeg("-f", "lavfi", "-i", "color=c=0x808080:size=320x180:rate=30,noise=alls=24:all_seed=7,trim=duration=3",
+           "-f", "lavfi", "-i", "color=c=0xffd040:size=40x40:rate=30,format=rgba,"
+           "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-19.5,Y-19.5),20),255,0)',trim=duration=3",
+           "-filter_complex", "[0][1]overlay=x='40+60*t':y=70:eval=frame,format=yuv420p[out]", "-map", "[out]",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
 def make_av(path, hz=440):
     """3 s of testsrc2 with a mono AAC sine 7 s longer than the video. The writer
     takes up to ~7 s of audio ahead of the video (measured 2026-11-03), so only a
@@ -132,6 +147,40 @@ def make_av(path, hz=440):
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
            "-c:a", "aac", "-b:a", "96k", "-ac", "1", "-flags:a", "+bitexact", "-fflags", "+bitexact", str(path))
+
+
+def crop_weights(in_size, out_size, origin, length):
+    """One axis of the reframe crop-and-resize (CLAUDE.md 架构原则 4, 重构图的裁切缩放):
+    antialiased bilinear, align_corners=False, PyTorch's formula, but over the
+    whole frame from a fractional origin. float64; rows sum to 1."""
+    s = length / out_size
+    support, inv = max(s, 1.0), (1.0 / s if s >= 1.0 else 1.0)
+    w = np.zeros((out_size, in_size))
+    for i in range(out_size):
+        c = origin + s * (i + 0.5)
+        lo, hi = max(int(c - support + 0.5), 0), min(int(c + support + 0.5), in_size)
+        for j in range(lo, hi):
+            w[i, j] = max(0.0, 1.0 - abs((j - c + 0.5) * inv))
+        w[i] /= w[i].sum()
+    return w
+
+
+def crop_resize(img, origin, length, out):
+    """img (1,3,H,W) -> (1,3,out_h,out_w); origin/length = (x, y), may be fractional."""
+    a = img[0].double().numpy()
+    wx = crop_weights(a.shape[2], out[0], origin[0], length[0])
+    wy = crop_weights(a.shape[1], out[1], origin[1], length[1])
+    return torch.from_numpy(np.stack([wy @ a[c] @ wx.T for c in range(3)])[None]).float()   # separable
+
+
+# name, input fixture, transposed (portrait source), origin (x, y), length (x, y), output (w, h)
+CROP_CASES = [
+    ("crop_full_up", "demo_resized256", False, (0, 0), (256, 256), (320, 320)),
+    ("crop_full_down", "demo_resized256", False, (0, 0), (256, 256), (100, 100)),
+    ("crop_916_up", "gym_a_in", False, (151.25, 0), (202.5, 360), (270, 480)),
+    ("crop_916_down", "gym_a_in", False, (300.75, 0), (202.5, 360), (90, 160)),
+    ("crop_169", "gym_a_in", True, (0, 88.4), (360, 202.5), (320, 180)),
+]
 
 
 def frame_times(path):
@@ -263,7 +312,31 @@ def generate(dest: Path):
     make_av(av880, hz=880)
     m.record("synthetic_av_880.mp4", av880, file=av880.name, dtype="h264+aac", shape=[90, 180, 320],
              note="the same video as synthetic_av + 880 Hz mono AAC 10 s")
-    m.write(generator="research/make_fixtures.py", upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
+    subject = dest / "synthetic_subject.mp4"
+    make_subject(subject)
+    m.record("synthetic_subject.mp4", subject, file=subject.name, dtype="h264", shape=[90, 180, 320],
+             note="disk r=20 at x = 60 + 60 t, y = 90, over grey noise")
+
+    # crop-and-resize: the numpy reference must equal PyTorch on whole frames first
+    sources = {"demo_resized256": tensors["demo"][0], "gym_a_in": tensors["gym_a"][0]}
+    sources["demo_resized256"] = resize256(sources["demo_resized256"])
+    for whole in ((320, 320), (100, 100)):
+        ref = crop_resize(sources["demo_resized256"], (0, 0), (256, 256), whole)
+        # float64: PyTorch's float32 upscale itself rounds by up to 3.9e-6 (measured 2026-11-03)
+        pt = F.interpolate(sources["demo_resized256"].double(), size=(whole[1], whole[0]), mode="bilinear",
+                           align_corners=False, antialias=True).float()
+        err = (ref - pt).abs().max().item()
+        if err > 1e-6:
+            sys.exit(f"crop reference differs from PyTorch antialias on a whole frame {whole}: {err}")
+    crops = []
+    for name, src, transposed, origin, length, out in CROP_CASES:
+        img = sources[src].transpose(2, 3).contiguous() if transposed else sources[src]
+        m.tensor(name, crop_resize(img, origin, length, out), f"crop {origin}+{length} -> {out} of {src}"
+                 + (" transposed" if transposed else ""))
+        crops.append({"name": name, "input": src, "transposed": transposed, "origin": list(origin),
+                      "length": list(length), "output": list(out)})
+
+    m.write(generator="research/make_fixtures.py", crop_cases=crops, upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
             torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times)
     print(f"synthetic shots: {expected}")
 

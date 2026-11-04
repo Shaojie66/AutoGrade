@@ -56,7 +56,7 @@ final class PreviewPresenter {
             if maker?.width != w || maker?.height != h {
                 maker = try DisplayFrameMaker(kernels: kernels, width: w, height: h)
             }
-            let layout: CompareLayout = mode == .split ? .split : (mode == .original ? .original : .graded)
+            let layout: CompareLayout = mode == .split ? .split : (mode == .original ? .original : .graded)   // output: graded
             let sample = try maker!.sampleBuffer(original: frame.original, graded: frame.graded, split: split, layout: layout)
             let renderer = layer.sampleBufferRenderer
             if renderer.status == .failed { renderer.flush() }

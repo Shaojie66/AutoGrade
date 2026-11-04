@@ -55,6 +55,24 @@ enum S {
         en: "Film styles are installed on this Mac only and are not distributed. FiveK weights: research use only, non-commercial; film styles are also under CC BY-SA 4.0.",
         zh: "胶片风格只安装在这台 Mac 上，不对外分发。FiveK 权重仅限研究、不得商用；胶片风格另受 CC BY-SA 4.0 约束。")
 
+    // reframe
+    static let aspect = Copy(en: "Frame", zh: "画幅")
+    static let aspectOriginal = Copy(en: "Original", zh: "原始")
+    static let aspectVertical = Copy(en: "Vertical 9:16", zh: "竖屏 9:16")
+    static let aspectHorizontal = Copy(en: "Horizontal 16:9", zh: "横屏 16:9")
+    static let detectingSubjects = Copy(en: "Finding the subject", zh: "正在识别主体")
+    static let reframeFailed = Copy(en: "Couldn’t reframe the video", zh: "无法重构画幅")
+    static let compareOutput = Copy(en: "Output", zh: "成片")
+    static let cropFixed = Copy(en: "Crop: fixed", zh: "裁切：自动固定")
+    static let cropFollow = Copy(en: "Crop: following", zh: "裁切：自动跟随")
+    static let cropManual = Copy(en: "Crop: manual", zh: "裁切：手动")
+    static let resetCrop = Copy(en: "Automatic", zh: "恢复自动")
+    static let cropPosition = Copy(en: "Crop position", zh: "裁切位置")
+    static let dragCropHint = Copy(en: "Drag to move this shot’s crop", zh: "拖动可调整本镜头的裁切位置")
+    static func exportFrame(_ name: String, _ w: Int, _ h: Int) -> Copy {
+        Copy(en: "Frame: \(name) · \(w)×\(h)", zh: "画幅：\(name) · \(w)×\(h)")
+    }
+
     // preview
     static let compareSplit = Copy(en: "Split", zh: "分屏")
     static let compareOriginal = Copy(en: "Original", zh: "原片")

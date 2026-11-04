@@ -77,6 +77,50 @@ kernel void resize_bilinear(device const float *src       [[buffer(0)]],
     dst[g.z * p.dw * p.dh + g.y * p.dw + g.x] = v;
 }
 
+// ------------------------------------------------------------- crop resize --
+// Reframe crop-and-resize (CLAUDE.md 架构原则 4, 重构图的裁切缩放): bilinear,
+// align_corners=False, antialiased like F.interpolate(antialias=True), but read
+// from the whole frame starting at a fractional origin. Each axis: scale s =
+// length / output, support max(s,1), triangle weights normalised over the frame.
+struct CropParams { uint sw, sh, dw, dh; float ox, oy, lx, ly; };
+constant int maxTaps = 64;   // support <= 31 px per side; Kernels.swift refuses more
+
+static inline int aa_weights(float c, float s, int n, thread float *w, thread int &lo, thread float &sum)
+{
+    const float support = max(s, 1.0f), inv = s >= 1.0f ? 1.0f / s : 1.0f;
+    lo = max(int(c - support + 0.5f), 0);
+    const int hi = min(int(c + support + 0.5f), n);
+    sum = 0.0f;
+    for (int j = lo; j < hi; ++j) {
+        const float v = max(0.0f, 1.0f - fabs((float(j) - c + 0.5f) * inv));
+        w[j - lo] = v;
+        sum += v;
+    }
+    return hi - lo;
+}
+
+kernel void crop_resize_aa(device const float *src  [[buffer(0)]],
+                           device float *dst        [[buffer(1)]],
+                           constant CropParams &p   [[buffer(2)]],
+                           uint3 g                  [[thread_position_in_grid]])
+{
+    if (g.x >= p.dw || g.y >= p.dh || g.z >= 3) return;
+    const float sx = p.lx / float(p.dw), sy = p.ly / float(p.dh);
+    float wx[maxTaps], wy[maxTaps], sumx, sumy;
+    int x0, y0;
+    const int nx = aa_weights(p.ox + sx * (float(g.x) + 0.5f), sx, int(p.sw), wx, x0, sumx);
+    const int ny = aa_weights(p.oy + sy * (float(g.y) + 0.5f), sy, int(p.sh), wy, y0, sumy);
+    device const float *s = src + g.z * p.sw * p.sh;
+    float acc = 0.0f;
+    for (int y = 0; y < ny; ++y) {
+        device const float *row = s + (y0 + y) * p.sw + x0;
+        float r = 0.0f;
+        for (int x = 0; x < nx; ++x) r += wx[x] * row[x];
+        acc += wy[y] * r;
+    }
+    dst[g.z * p.dw * p.dh + g.y * p.dw + g.x] = acc / (sumx * sumy);
+}
+
 // ------------------------------------------------------------------- AiLUT --
 // Mirrors upstream ailut_transform_cpu.cpp: lower_bound + trilinear, same eps,
 // same operation order.

@@ -124,6 +124,35 @@ public final class GradeKernels: @unchecked Sendable {
         return out
     }
 
+    // MARK: reframe
+
+    /// Crop `length` (x, y) at `origin` (x, y) of `src` and resize it to `output`'s
+    /// size (CLAUDE.md 重构图的裁切缩放). Origin and length may be fractional.
+    public func encodeCropResize(into enc: MTLComputeCommandEncoder, _ src: PlanarImage, origin: SIMD2<Float>,
+                                 length: SIMD2<Float>, output: PlanarImage) throws {
+        let scale = length / SIMD2(Float(output.width), Float(output.height))
+        guard scale.max() <= 31, origin.min() >= 0, origin.x + length.x <= Float(src.width) + 1e-3,
+              origin.y + length.y <= Float(src.height) + 1e-3 else {
+            throw MetalError.badArgument("crop \(origin)+\(length) of \(src.width)x\(src.height) -> \(output.width)x\(output.height)")
+        }
+        struct Params { var sw, sh, dw, dh: UInt32; var ox, oy, lx, ly: Float }
+        var params = Params(sw: UInt32(src.width), sh: UInt32(src.height), dw: UInt32(output.width), dh: UInt32(output.height),
+                            ox: origin.x, oy: origin.y, lx: length.x, ly: length.y)
+        enc.setComputePipelineState(try metal.pipeline("crop_resize_aa"))
+        enc.setBuffer(src.buffer, offset: 0, index: 0)
+        enc.setBuffer(output.buffer, offset: 0, index: 1)
+        enc.setBytes(&params, length: MemoryLayout<Params>.size, index: 2)
+        enc.dispatchThreads(MTLSize(width: output.width, height: output.height, depth: 3),
+                            threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+    }
+
+    public func cropResize(_ src: PlanarImage, origin: SIMD2<Float>, length: SIMD2<Float>,
+                           width: Int, height: Int) throws -> PlanarImage {
+        let out = try makeImage(width: width, height: height)
+        try metal.run { try encodeCropResize(into: $0, src, origin: origin, length: length, output: out) }
+        return out
+    }
+
     // MARK: AiLUT
 
     public func applyAiLUT(_ img: PlanarImage, _ ai: AiLUT) throws -> PlanarImage {
@@ -251,6 +280,18 @@ public final class GradeKernels: @unchecked Sendable {
         if let original { try encodeWriteBGRA8(into: enc, scratch.rgb, to: original) }
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
         try encodeWriteBGRA8(into: enc, scratch.graded, to: graded)
+    }
+
+    /// The reframed variant: grade the whole frame, then crop-and-resize it to
+    /// `cropped`'s size (CLAUDE.md 重构图的裁切缩放: grade first, then resample).
+    public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
+                                 lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
+                                 crop origin: SIMD2<Float>, length: SIMD2<Float>, cropped: PlanarImage,
+                                 output: MTLTexture) throws {
+        try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
+        try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
+        try encodeCropResize(into: enc, scratch.graded, origin: origin, length: length, output: cropped)
+        try encodeWriteBGRA8(into: enc, cropped, to: output)
     }
 
     // MARK: helpers

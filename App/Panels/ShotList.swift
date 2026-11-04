@@ -42,7 +42,7 @@ private struct ShotRow: View {
             }
             .buttonStyle(.plain)
             HStack(spacing: 6) {
-                Text(L(S.strength)).font(.caption)
+                rowLabel(L(S.strength))
                 Slider(value: strength, in: 0...1) { editing in
                     if !editing { project.strengthCommitted(shot: index) }
                 }
@@ -51,6 +51,25 @@ private struct ShotRow: View {
                 Text("\(Int((project.strengths[safe: index] ?? 1) * 100))%")
                     .font(.caption.monospacedDigit())
                     .frame(width: 36, alignment: .trailing)
+            }
+            if let r = project.reframe, index < r.modes.count {
+                // the same setCropCenter the preview drag uses; also reachable without dragging
+                HStack(spacing: 6) {
+                    rowLabel(L(S.cropPosition))
+                    Slider(value: cropPosition(r), in: cropRange(r))
+                        .controlSize(.small)
+                        .disabled(!project.canEdit)
+                        .accessibilityLabel(L(S.cropPosition))
+                }
+                HStack(spacing: 6) {
+                    Text(L(r.modes[index] == .manual ? S.cropManual : r.modes[index] == .follow ? S.cropFollow : S.cropFixed))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if r.modes[index] == .manual {
+                        Button(L(S.resetCrop)) { project.setCropCenter(nil, shot: index) }
+                            .controlSize(.small)
+                            .disabled(!project.canEdit)
+                    }
+                }
             }
             if project.availableStyles.count > 1 {
                 Picker(L(S.style), selection: style) {
@@ -69,6 +88,23 @@ private struct ShotRow: View {
     private var strength: Binding<Double> {
         Binding(get: { Double(project.strengths[safe: index] ?? 1) },
                 set: { project.setStrength(Float($0), shot: index) })
+    }
+
+    /// A fixed-width, one-line label, so a longer translation never widens the row
+    /// (English "Crop position" pushed the sidebar's rows out of view, 2026-11-04).
+    private func rowLabel(_ text: String) -> some View {
+        Text(text).font(.caption).lineLimit(1).minimumScaleFactor(0.8).frame(width: 64, alignment: .leading)
+    }
+
+    /// The shot's crop centre at its middle frame, normalised along the crop's axis.
+    private func cropPosition(_ r: ReframeInfo) -> Binding<Double> {
+        Binding(get: { Double(r.centers[safe: (shot.first + shot.last) / 2] ?? 0.5) },
+                set: { project.setCropCenter(Float($0), shot: index) })
+    }
+
+    private func cropRange(_ r: ReframeInfo) -> ClosedRange<Double> {
+        let half = (r.axis == 0 ? r.length.x : r.length.y) / 2
+        return half...max(half, 1 - half)
     }
 
     private var style: Binding<String> {

@@ -18,6 +18,7 @@ struct Summary: Sendable {
     let strengths: [Float]
     let styles: [String]
     let hasAudio: Bool
+    let reframe: ReframeInfo?
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -30,6 +31,16 @@ struct DisplayFrame: @unchecked Sendable {
     let index: Int
     let original: MTLTexture
     let graded: MTLTexture
+}
+
+/// The reframe state the interface draws: the crop per frame (normalised along
+/// `axis`) and how each shot was decided (CLAUDE.md 重构图).
+struct ReframeInfo: Sendable {
+    let aspect: Aspect
+    let axis: Int
+    let length: SIMD2<Double>          // crop size as a fraction of the frame
+    let centers: [Float]               // per frame
+    let modes: [CropPath.Mode]         // per shot
 }
 
 struct PlaybackStats: Sendable {
@@ -50,6 +61,12 @@ actor Engine {
     private var analysis: Analysis?
     private var strengths: [Float] = []
     private var hasAudio = false
+    // reframing (CLAUDE.md 重构图): the subject track is per video, the path per edit
+    private var track: SubjectTrack?
+    private var aspect: Aspect?
+    private var cropOverrides: [Float?] = []
+    private var path: CropPath?
+    private var reframeSlots: [ReframeTargets] = []
     private var finals: [LUT3D] = []
     /// Three slots so the slot being drawn is never the one being written.
     private var previewSlots: [PreviewTargets] = []
@@ -82,6 +99,11 @@ actor Engine {
         hasAudio = (try? AudioPassthrough.trackCount(url)) ?? 0 > 0
         strengths = Array(repeating: 1, count: result.shots.count)
         finals = result.luts
+        track = nil
+        aspect = nil
+        path = nil
+        reframeSlots = []
+        cropOverrides = Array(repeating: nil, count: result.shots.count)
         previewSlots = try (0..<3).map { _ in
             try PreviewTargets(kernels: core.kernels, width: result.info.width, height: result.info.height)
         }
@@ -99,7 +121,9 @@ actor Engine {
             progress(Double(i - shot.first + 1) / Double(shot.frames))
         }
         strengths.insert(strengths[k], at: k + 1)   // both halves keep the shot's strength
+        cropOverrides.insert(cropOverrides[k], at: k + 1)
         try rebuildFinals()
+        rebuildPath()
         return summary()
     }
 
@@ -113,7 +137,9 @@ actor Engine {
             progress(Double(i - later.first + 1) / Double(later.frames))
         }
         strengths.remove(at: k)                     // the merged shot keeps the earlier one's strength (and style)
+        cropOverrides.remove(at: k)
         try rebuildFinals()
+        rebuildPath()
         return summary()
     }
 
@@ -137,6 +163,46 @@ actor Engine {
         finals[k] = try core.finalLUT(a, shot: k, strength: value)
     }
 
+    // MARK: reframe
+
+    /// nil = the source's own frame. The first time a video is reframed its
+    /// subjects are detected (one pass, cancellable); after that only the path is recomputed.
+    func setAspect(_ newAspect: Aspect?, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis else { return try noVideo() }
+        if let newAspect, track == nil {
+            let token = control.begin()
+            defer { control.end(token) }
+            track = try core.detectSubjects(source, analysis: a, cancel: token) { i in
+                progress(Double(i + 1) / Double(a.frameCount))
+            }
+        }
+        if newAspect != aspect {
+            cropOverrides = Array(repeating: nil, count: a.shots.count)   // positions are per axis
+            reframeSlots = try newAspect.map { asp in
+                try (0..<3).map { _ in
+                    try ReframeTargets(kernels: core.kernels, sourceWidth: a.info.width, sourceHeight: a.info.height, aspect: asp)
+                }
+            } ?? []
+        }
+        aspect = newAspect
+        rebuildPath()
+        return summary()
+    }
+
+    /// Shot k fixed at `center` (normalised along the crop's axis), or back to automatic (nil).
+    func setCropCenter(_ center: Float?, shot k: Int) -> Summary? {
+        guard analysis != nil, k < cropOverrides.count else { return nil }
+        cropOverrides[k] = center.map { min(max($0, 0), 1) }
+        rebuildPath()
+        return summary()
+    }
+
+    private func rebuildPath() {
+        guard let a = analysis, let aspect, let track else { path = nil; return }
+        path = Reframe.path(track: track, shots: a.shots, frameTimes: a.frameTimes, width: a.info.width,
+                            height: a.info.height, aspect: aspect, overrides: cropOverrides)
+    }
+
     private func rebuildFinals() throws {
         guard let a = analysis else { return }
         finals = try core.finalLUTs(a, strengths: strengths)
@@ -151,6 +217,11 @@ actor Engine {
         }
         let duration = max(end.seconds, 1e-6)
         return Summary(info: a.info, shots: a.shots, strengths: strengths, styles: a.styles, hasAudio: hasAudio,
+                       reframe: path.map { p in
+                           ReframeInfo(aspect: p.aspect, axis: p.axis,
+                                       length: SIMD2(Double(p.length.x) / Double(a.info.width), Double(p.length.y) / Double(a.info.height)),
+                                       centers: p.centers, modes: p.modes)
+                       },
                        shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
@@ -159,16 +230,24 @@ actor Engine {
 
     // MARK: preview
 
-    func frame(_ index: Int) throws -> DisplayFrame {
+    /// `output`: the reframed picture ("成片", the export's bytes) when a crop is set.
+    func frame(_ index: Int, output: Bool = false) throws -> DisplayFrame {
         guard let source, let a = analysis else { throw VideoError.reader("no video is open") }
         let decoded = try core.decodeFrame(source, analysis: a, index: index)
-        return try present(decoded, analysis: a)
+        return try present(decoded, analysis: a, output: output)
     }
 
-    private func present(_ decoded: DecodedFrame, analysis a: Analysis) throws -> DisplayFrame {
+    private func present(_ decoded: DecodedFrame, analysis a: Analysis, output: Bool) throws -> DisplayFrame {
+        let lut = finals[a.shotIndex(forFrame: decoded.index)]
+        if output, let path, !reframeSlots.isEmpty {
+            let slot = reframeSlots[nextSlot % reframeSlots.count]
+            nextSlot = (nextSlot + 1) % 3
+            try core.previewReframed(decoded, lut: lut, path: path, into: slot)
+            return DisplayFrame(index: decoded.index, original: slot.output, graded: slot.output)
+        }
         let slot = previewSlots[nextSlot]
         nextSlot = (nextSlot + 1) % previewSlots.count
-        try core.preview(decoded, lut: finals[a.shotIndex(forFrame: decoded.index)], into: slot)
+        try core.preview(decoded, lut: lut, into: slot)
         return DisplayFrame(index: decoded.index, original: slot.original, graded: slot.graded)
     }
 
@@ -205,7 +284,7 @@ actor Engine {
     /// decoded but not graded or shown (dropped), so the clock never slips.
     /// The actor is free between frames (`Task.sleep`), so strength changes and
     /// edits interleave with playback.
-    func play(from index: Int, onFrame: @escaping @Sendable (DisplayFrame, PlaybackStats) -> Void) async {
+    func play(from index: Int, output: Bool = false, onFrame: @escaping @Sendable (DisplayFrame, PlaybackStats) -> Void) async {
         guard let source, let a = analysis, index < a.frameCount else { return }
         let reader: VideoReader
         do {
@@ -227,7 +306,7 @@ actor Engine {
             }
             try? await Task.sleep(until: due, clock: clock)
             if Task.isCancelled { break }
-            guard let frame = try? present(decoded, analysis: analysis ?? a) else { break }
+            guard let frame = try? present(decoded, analysis: analysis ?? a, output: output) else { break }
             shown += 1
             window.append(clock.now)
             window.removeAll { clock.now - $0 > .seconds(1) }
@@ -254,7 +333,7 @@ actor Engine {
             ? output.deletingLastPathComponent().appendingPathComponent(".autograde-\(UUID().uuidString).mov")
             : output
         let rendered = try core.render(source, analysis: a, luts: finals, to: target, codec: codec, audio: audio,
-                                       cancel: token) { i in
+                                       reframe: path, cancel: token) { i in
             progress(Double(i + 1) / Double(a.frameCount))
         }
         checking()

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 enum CompareMode: String, CaseIterable, Sendable {
     case split, original, graded
+    case output          // the reframed picture (成片), only while an aspect is set
 }
 
 /// The one place interface state changes (CLAUDE.md, App/Model). Views read it
@@ -43,7 +44,11 @@ final class Project {
     // view state
     private(set) var playhead = 0
     var split: Double = 0.5
-    var compare: CompareMode = .split
+    var compare: CompareMode = .split {
+        didSet { if (compare == .output) != (oldValue == .output) { showFrame(playhead) } }
+    }
+    /// The live crop centre while a drag is under way (normalised along the axis), drawn before it is committed.
+    var draggingCrop: Float?
     private(set) var display: DisplayFrame?
     private(set) var isPlaying = false
     private(set) var stats: PlaybackStats?
@@ -104,6 +109,7 @@ final class Project {
         guard let engine else { return }
         stopPlaying()
         engine.cancelCurrentJob()
+        if compare == .output { compare = .split }   // a new video opens in its own frame
         source = url
         summary = nil
         strengths = []
@@ -173,7 +179,7 @@ final class Project {
             var next: Int? = index
             while let i = next {
                 pendingFrame = nil
-                if let frame = try? await engine.frame(i) { display = frame }
+                if let frame = try? await engine.frame(i, output: compare == .output) { display = frame }
                 next = pendingFrame
             }
             frameTask = nil
@@ -192,7 +198,7 @@ final class Project {
         isPlaying = true
         let from = playhead
         playTask = Task {
-            await engine.play(from: from) { frame, stats in
+            await engine.play(from: from, output: compare == .output) { frame, stats in
                 Task { @MainActor in
                     guard self.isPlaying else { return }
                     self.display = frame
@@ -211,6 +217,37 @@ final class Project {
     }
 
     // MARK: strength
+
+    // MARK: reframe
+
+    var reframe: ReframeInfo? { summary?.reframe }
+
+    /// nil = original frame. Detects subjects the first time (busy, cancellable).
+    func setAspect(_ aspect: Aspect?) {
+        guard let engine, canEdit, aspect != reframe?.aspect else { return }
+        stopPlaying()
+        busy = S.detectingSubjects
+        busyProgress = 0
+        Task {
+            do {
+                apply(try await engine.setAspect(aspect) { p in Task { @MainActor in self.busyProgress = p } }, keepThumbnails: true)
+                if aspect == nil, compare == .output { compare = .graded }
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.reframeFailed, message: "\(error)")
+            }
+            busy = nil
+        }
+    }
+
+    /// Fix shot k's crop where it was dragged, or (nil) return it to automatic.
+    func setCropCenter(_ center: Float?, shot k: Int) {
+        guard let engine else { return }
+        Task {
+            if let s = await engine.setCropCenter(center, shot: k) { apply(s, keepThumbnails: true) }
+            draggingCrop = nil
+        }
+    }
 
     func setStrength(_ value: Float, shot k: Int) {
         guard let engine, k < strengths.count else { return }
@@ -313,13 +350,15 @@ final class Project {
         }
     }
 
-    private func apply(_ s: Summary) {
+    private func apply(_ s: Summary, keepThumbnails: Bool = false) {
         summary = s
         strengths = s.strengths
         styles = s.styles
-        thumbnails = [:]
         showFrame(playhead)
-        refreshThumbnails()
+        if !keepThumbnails {   // a crop change does not change the graded thumbnails
+            thumbnails = [:]
+            refreshThumbnails()
+        }
     }
 
     // MARK: thumbnails

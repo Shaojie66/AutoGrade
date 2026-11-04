@@ -3,7 +3,7 @@ import CoreML
 import Foundation
 
 let usage = """
-usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut 0.25] [--size 65] [--codec hevc|prores] [--no-audio]
+usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut 0.25] [--size 65] [--codec hevc|prores] [--no-audio] [--reframe 9:16|16:9]
        autograde --list-styles
 
   Grades every shot of <input> with AdaInt and writes <output.mov>.
@@ -15,6 +15,9 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
   --size       shot LUT lattice size (default 65)
   --codec      output codec (default hevc)
   --no-audio   do not copy the source's audio track (copied as it is by default)
+  --reframe    crop to 9:16 (1080x1920) or 16:9 (1920x1080), following the subject
+  --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
+               length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
   (timestamps, BT.709 tags, audio, sampled frames); a failed check exits with status 1
   and keeps the file.
@@ -29,6 +32,8 @@ struct Options {
     var codec = OutputCodec.hevc
     var style = StyleCatalog.builtinID
     var audio = true
+    var reframe: Aspect?
+    var reframeCSV: URL?
 }
 
 func fail(_ message: String) -> Never {
@@ -45,6 +50,8 @@ func parse(_ args: [String]) -> Options {
     var input: URL?, output: URL?, cubeDir: URL?
     var cut = ShotDetector.defaultThreshold, size = 65, codec = OutputCodec.hevc, style = StyleCatalog.builtinID
     var audio = true
+    var reframe: Aspect?
+    var reframeCSV: URL?
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -59,6 +66,8 @@ func parse(_ args: [String]) -> Options {
         case "--codec": codec = convert(value(arg), OutputCodec.init(rawValue:), "--codec is hevc or prores")
         case "--style": style = value(arg)
         case "--no-audio": audio = false
+        case "--reframe": reframe = convert(value(arg), Aspect.init(rawValue:), "--reframe is 9:16 or 16:9")
+        case "--reframe-csv": reframeCSV = URL(fileURLWithPath: value(arg))
         case "--list-styles": listStyles(); exit(0)
         case "-h", "--help": print(usage); exit(0)
         default:
@@ -68,7 +77,8 @@ func parse(_ args: [String]) -> Options {
     }
     guard let input, let output else { fail(usage) }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
-    return Options(input: input, output: output, cubeDir: cubeDir, cut: cut, size: size, codec: codec, style: style, audio: audio)
+    return Options(input: input, output: output, cubeDir: cubeDir, cut: cut, size: size, codec: codec, style: style, audio: audio, reframe: reframe,
+                   reframeCSV: reframeCSV)
 }
 
 func listStyles() {
@@ -103,8 +113,33 @@ do {
     let a = analysis.times
     print("analyze: decode \(ms(a.decode, a.frames)), yuv→rgb \(ms(a.convert, a.frames)), resize \(ms(a.resize, a.frames)), "
           + "predict \(ms(a.predict, a.frames)), bake \(ms(a.bake, a.frames)), detect+avg \(ms(a.detect, a.frames))")
+    var path: CropPath?
+    if let aspect = options.reframe {
+        let track = try engine.detectSubjects(options.input, analysis: analysis)
+        let p = Reframe.path(track: track, shots: analysis.shots, frameTimes: analysis.frameTimes, width: info.width,
+                             height: info.height, aspect: aspect, overrides: Array(repeating: nil, count: analysis.shots.count))
+        print(String(format: "reframe %@: crop %.1fx%.1f -> %dx%d; subject: %d faces, %d people, %d saliency, %d none; %@ (%.2f s)",
+                     aspect.rawValue, p.length.x, p.length.y, p.outputSize.width, p.outputSize.height,
+                     track.count(.face), track.count(.human), track.count(.saliency),
+                     track.samples.filter { $0 == nil }.count, ms(track.seconds, analysis.frameCount), track.seconds))
+        for (k, mode) in p.modes.enumerated() {
+            let shot = analysis.shots[k], c = p.centers[shot.first...shot.last]
+            print(String(format: "  shot %02d: %@, centre %.3f-%.3f", k, mode.rawValue, c.min()!, c.max()!))
+        }
+        path = p
+        if let csv = options.reframeCSV {
+            var text = "frame,seconds,shot,mode,centre,origin_x,origin_y,length_x,length_y,subject,subject_x,subject_y\n"
+            for f in 0..<analysis.frameCount {
+                let k = analysis.shotIndex(forFrame: f), o = p.origins[f], s = track.samples[f]
+                text += String(format: "%d,%.6f,%d,%@,%.6f,%.3f,%.3f,%.3f,%.3f,%@,%.4f,%.4f\n", f, analysis.frameTimes[f].seconds, k,
+                               p.modes[k].rawValue, p.centers[f], o.x, o.y, p.length.x, p.length.y,
+                               s?.source.rawValue ?? "none", s?.center.x ?? -1, s?.center.y ?? -1)
+            }
+            try text.write(to: csv, atomically: true, encoding: .utf8)
+        }
+    }
     let result = try engine.render(options.input, analysis: analysis, luts: analysis.luts, to: options.output,
-                                   codec: options.codec, audio: options.audio)
+                                   codec: options.codec, audio: options.audio, reframe: path)
     let r = result.times
     for warning in result.warnings { print("warning: \(warning)") }
     print("render:  decode \(ms(r.decode, r.frames)), yuv→rgb \(ms(r.convert, r.frames)), apply+bgra \(ms(r.apply, r.frames)), "

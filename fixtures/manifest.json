@@ -1,5 +1,92 @@
 {
   "generator": "research/make_fixtures.py",
+  "crop_cases": [
+    {
+      "name": "crop_full_up",
+      "input": "demo_resized256",
+      "transposed": false,
+      "origin": [
+        0,
+        0
+      ],
+      "length": [
+        256,
+        256
+      ],
+      "output": [
+        320,
+        320
+      ]
+    },
+    {
+      "name": "crop_full_down",
+      "input": "demo_resized256",
+      "transposed": false,
+      "origin": [
+        0,
+        0
+      ],
+      "length": [
+        256,
+        256
+      ],
+      "output": [
+        100,
+        100
+      ]
+    },
+    {
+      "name": "crop_916_up",
+      "input": "gym_a_in",
+      "transposed": false,
+      "origin": [
+        151.25,
+        0
+      ],
+      "length": [
+        202.5,
+        360
+      ],
+      "output": [
+        270,
+        480
+      ]
+    },
+    {
+      "name": "crop_916_down",
+      "input": "gym_a_in",
+      "transposed": false,
+      "origin": [
+        300.75,
+        0
+      ],
+      "length": [
+        202.5,
+        360
+      ],
+      "output": [
+        90,
+        160
+      ]
+    },
+    {
+      "name": "crop_169",
+      "input": "gym_a_in",
+      "transposed": true,
+      "origin": [
+        0,
+        88.4
+      ],
+      "length": [
+        360,
+        202.5
+      ],
+      "output": [
+        320,
+        180
+      ]
+    }
+  ],
   "upstream": "AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
   "torch": "2.15.0",
   "cut_threshold": 0.25,
@@ -133,6 +220,71 @@
       "note": "per-channel AdaInt vertices",
       "sha256": "da5b5957bdc9d36db0ca3ca1241c8bdd7387a9a6f42e2e05f7575717337154a2",
       "bytes": 396
+    },
+    "crop_169": {
+      "file": "crop_169.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        180,
+        320
+      ],
+      "note": "crop (0, 88.4)+(360, 202.5) -> (320, 180) of gym_a_in transposed",
+      "sha256": "b6d024fdaafcff3628d9086cd42a9f1eab7aad846badea1e5e5c53d2448ce9f3",
+      "bytes": 691200
+    },
+    "crop_916_down": {
+      "file": "crop_916_down.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        160,
+        90
+      ],
+      "note": "crop (300.75, 0)+(202.5, 360) -> (90, 160) of gym_a_in",
+      "sha256": "820fb0f30acb1efa8e8fe12049f5fafb826ffcc7f6c15b9eceb03a34eb7ec570",
+      "bytes": 172800
+    },
+    "crop_916_up": {
+      "file": "crop_916_up.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        480,
+        270
+      ],
+      "note": "crop (151.25, 0)+(202.5, 360) -> (270, 480) of gym_a_in",
+      "sha256": "fd9c5cc254417cf214a264dfab6bcf19f77d7bf70dbe5fb1f699914c0ee3fef5",
+      "bytes": 1555200
+    },
+    "crop_full_down": {
+      "file": "crop_full_down.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        100,
+        100
+      ],
+      "note": "crop (0, 0)+(256, 256) -> (100, 100) of demo_resized256",
+      "sha256": "f7d547b212d1aaa1f704f4dd36345b7a0407adf0df56894625d359e8b4e9c9a7",
+      "bytes": 120000
+    },
+    "crop_full_up": {
+      "file": "crop_full_up.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        320,
+        320
+      ],
+      "note": "crop (0, 0)+(256, 256) -> (320, 320) of demo_resized256",
+      "sha256": "e9ec53b12ab3e078aa61bf57e80a2ebbe0fc3790598d148751c2efdf6eb575c4",
+      "bytes": 1228800
     },
     "demo_ailut_out": {
       "file": "demo_ailut_out.png",
@@ -457,6 +609,18 @@
       "note": "testsrc2 | smptebars | mandelbrot, 1 s each, bt709 limited",
       "sha256": "cdefb9e6a2bf2c26ebc31e99d8204f0dae65fc51c6cd3d832e415f8e670d20b7",
       "bytes": 110489
+    },
+    "synthetic_subject.mp4": {
+      "file": "synthetic_subject.mp4",
+      "dtype": "h264",
+      "shape": [
+        90,
+        180,
+        320
+      ],
+      "note": "disk r=20 at x = 60 + 60 t, y = 90, over grey noise",
+      "sha256": "29fb0f2afced5029f5771a7268cdeb41ce0619f84f6f7ee145d897c5b357f7a3",
+      "bytes": 180658
     },
     "synthetic_vfr.mp4": {
       "file": "synthetic_vfr.mp4",
