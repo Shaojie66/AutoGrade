@@ -19,8 +19,8 @@ enum S {
 
     // empty state
     static let emptyTitle = Copy(en: "Automatically grade a video shot by shot", zh: "打开视频，自动逐镜头调色")
-    static let emptyHint = Copy(en: "Or drop a video here. Supports 8-bit H.264/HEVC in BT.709.",
-                                zh: "也可以将视频拖到这里。支持 BT.709 色彩空间的 8-bit H.264/HEVC 视频。")
+    static let emptyHint = Copy(en: "Or drop a video here. Supports 8-bit H.264/HEVC in BT.709 (limited or full range).",
+                                zh: "也可以将视频拖到这里。支持 BT.709 色彩空间的 8-bit H.264/HEVC 视频（窄范围或全范围）。")
 
     // analysis
     static let analyzing = Copy(en: "Analyzing", zh: "正在分析")

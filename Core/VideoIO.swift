@@ -51,6 +51,8 @@ public struct VideoInfo: Sendable {
     public let duration: CMTime
     /// The video track's own time scale; the export writes its track in it (CLAUDE.md 导出).
     public let timeScale: CMTimeScale
+    /// Full-range ('420f') planes; false is limited ('420v'), also when untagged (CLAUDE.md 架构原则 4).
+    public let fullRange: Bool
 }
 
 /// One decoded frame: the decoder's own 4:2:0 planes as Metal textures.
@@ -61,11 +63,18 @@ public struct DecodedFrame {
     public let pixelBuffer: CVPixelBuffer
     public let luma: MTLTexture
     public let chroma: MTLTexture
+    /// The planes' range, from the buffer's pixel format: '420f' full, '420v' limited.
+    public let fullRange: Bool
     let lumaRef: CVMetalTexture
     let chromaRef: CVMetalTexture
 
-    /// Metal views of a '420v' buffer's two planes.
+    /// Metal views of a '420v' or '420f' buffer's two planes.
     init(index: Int, presentationTime: CMTime, pixelBuffer: CVPixelBuffer, cache: CVMetalTextureCache) throws {
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        guard format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange else {
+            throw VideoError.reader("unexpected pixel format \(format)")
+        }
+        fullRange = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         func texture(_ plane: Int, _ format: MTLPixelFormat) throws -> CVMetalTexture {
             var tex: CVMetalTexture?
             let status = CVMetalTextureCacheCreateTextureFromImage(
@@ -84,9 +93,9 @@ public struct DecodedFrame {
     }
 }
 
-/// Sequential decoder. Accepts only 8-bit 4:2:0 BT.709 limited range (or
+/// Sequential decoder. Accepts only 8-bit 4:2:0 BT.709, limited or full range (or
 /// untagged, treated as BT.709); anything else is refused rather than guessed
-/// (CLAUDE.md 架构原则 4). Output is the decoder's native '420v' planes, so no
+/// (CLAUDE.md 架构原则 4). Output is the decoder's native '420v' / '420f' planes, so no
 /// colour conversion happens before our own kernel.
 ///
 /// Reading from the start numbers frames by count. Reading a `timeRange`
@@ -122,16 +131,20 @@ public final class VideoReader {
         let (track, size, rate, formats, duration, timeScale) = loaded.value
         guard let format = formats.first else { throw VideoError.unsupported("no format description") }
         warnings = checkingFormat ? try Self.checkFormat(format) : []
+        let fullRange = Self.isFullRange(format)
         info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration,
-                         timeScale: timeScale)
+                         timeScale: timeScale, fullRange: fullRange)
         guard info.width % 2 == 0, info.height % 2 == 0 else {
             throw VideoError.unsupported("odd frame size \(info.width)x\(info.height)")
         }
 
         reader = try AVAssetReader(asset: asset)
         if let timeRange { reader.timeRange = timeRange }
+        // the decoder's own range: a full-range source read as '420v' is range-converted
+        // by the system first, one more lossy step (CLAUDE.md 架构原则 4)
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferPixelFormatTypeKey as String: fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                                                  : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferMetalCompatibilityKey as String: true,
         ])
         output.alwaysCopiesSampleData = false
@@ -170,10 +183,13 @@ public final class VideoReader {
             || transfer == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) {
             throw VideoError.unsupported("HDR transfer \(transfer)")
         }
-        if let full = ext[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool, full {
-            throw VideoError.unsupported("full-range video (only limited range is supported)")
-        }
         return warnings
+    }
+
+    /// The format description's full-range flag; untagged is limited.
+    static func isFullRange(_ format: CMFormatDescription) -> Bool {
+        let ext = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
+        return ext[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool ?? false
     }
 
     /// The next frame in decode-output (presentation) order, or nil at the end.

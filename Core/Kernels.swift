@@ -89,20 +89,24 @@ public final class GradeKernels: @unchecked Sendable {
 
     // MARK: decode
 
+    /// `fullRange`: the planes' range, from the decoder's pixel format (`DecodedFrame.fullRange`;
+    /// CLAUDE.md 架构原则 4). Required on purpose: a guess would shift every colour.
     public func encodeYUVToRGB(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
-                               output: PlanarImage) throws {
+                               fullRange: Bool, output: PlanarImage) throws {
         precondition(output.width == luma.width && output.height == luma.height)
+        var range: UInt32 = fullRange ? 1 : 0
         enc.setComputePipelineState(try metal.pipeline("yuv420_to_rgb"))
         enc.setTexture(luma, index: 0)
         enc.setTexture(chroma, index: 1)
         enc.setBuffer(output.buffer, offset: 0, index: 0)
+        enc.setBytes(&range, length: 4, index: 1)
         enc.dispatchThreads(MTLSize(width: luma.width, height: luma.height, depth: 1), threadsPerThreadgroup: tile2D)
     }
 
-    /// Decoder planes (r8Unorm luma, rg8Unorm CbCr) -> planar RGB, BT.709 limited.
-    public func yuvToRGB(luma: MTLTexture, chroma: MTLTexture) throws -> PlanarImage {
+    /// Decoder planes (r8Unorm luma, rg8Unorm CbCr) -> planar RGB, BT.709 limited or full range.
+    public func yuvToRGB(luma: MTLTexture, chroma: MTLTexture, fullRange: Bool) throws -> PlanarImage {
         let out = try makeImage(width: luma.width, height: luma.height)
-        try metal.run { try encodeYUVToRGB(into: $0, luma: luma, chroma: chroma, output: out) }
+        try metal.run { try encodeYUVToRGB(into: $0, luma: luma, chroma: chroma, fullRange: fullRange, output: out) }
         return out
     }
 
@@ -303,11 +307,11 @@ public final class GradeKernels: @unchecked Sendable {
     /// decoder planes -> RGB -> final LUT -> (background) -> (subtitle) -> BGRA8 in `graded`; optionally the
     /// ungraded RGB -> BGRA8 in `original`. `scratch` must match the frame size.
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
-                                 lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
+                                 fullRange: Bool, lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
                                  graded: MTLTexture, original: MTLTexture?,
                                  background: (MaskImage, BackgroundScratch)? = nil,
                                  overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
-        try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
+        try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, fullRange: fullRange, output: scratch.rgb)
         if let original { try encodeWriteBGRA8(into: enc, scratch.rgb, to: original) }
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
         if let (mask, bg) = background { try encodeBackground(into: enc, scratch.graded, mask: mask, scratch: bg) }
@@ -318,11 +322,11 @@ public final class GradeKernels: @unchecked Sendable {
     /// The reframed variant: grade the whole frame, then crop-and-resize it to
     /// `cropped`'s size (CLAUDE.md 重构图的裁切缩放: grade first, then resample).
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
-                                 lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
+                                 fullRange: Bool, lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
                                  crop origin: SIMD2<Float>, length: SIMD2<Float>, cropped: PlanarImage,
                                  output: MTLTexture, background: (MaskImage, BackgroundScratch)? = nil,
                                  overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
-        try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
+        try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, fullRange: fullRange, output: scratch.rgb)
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
         if let (mask, bg) = background { try encodeBackground(into: enc, scratch.graded, mask: mask, scratch: bg) }
         try encodeCropResize(into: enc, scratch.graded, origin: origin, length: length, output: cropped)

@@ -4,62 +4,98 @@ import Foundation
 import Metal
 import VideoToolbox
 
-/// VideoToolbox's temporal noise filter over decoder '420v' frames (CLAUDE.md
-/// 画质增强 / 降噪): each frame is converted losslessly to the filter's
-/// format, filtered with its neighbours in the same shot, and converted back to
-/// '420v' so the usual `yuv420_to_rgb` reads it. The filter is recursive: a
-/// frame's output depends on every frame of its chain before it, so each chain
-/// gets a fresh session (`restart`), started on its first frame.
+/// VideoToolbox's temporal noise filter over decoder '420v' / '420f' frames
+/// (CLAUDE.md 画质增强 / 降噪): each frame is converted losslessly to the
+/// filter's format of the same range ('&8v0' / '&8f0'), filtered with its
+/// neighbours in the same shot, and converted back to the decoder's format so
+/// the usual `yuv420_to_rgb` reads it. The range is taken from the first frame
+/// (all frames of a video share it). The filter is recursive: a frame's output
+/// depends on every frame of its chain before it, so each chain gets a fresh
+/// session (`restart`), started on its first frame.
 @available(macOS 26.0, *)
 final class Denoiser {
     let previousCount: Int
     let nextCount: Int
+    private let width: Int
+    private let height: Int
     private var processor = VTFrameProcessor()
-    private let configuration: VTTemporalNoiseFilterConfiguration
+    private var started = false
+    private var format: Format?
     private let transfer: VTPixelTransferSession
-    private let sourcePool: CVPixelBufferPool
-    private let destinationPool: CVPixelBufferPool
-    private let outputPool: CVPixelBufferPool
     private let cache: CVMetalTextureCache
+
+    /// Everything that depends on the frames' range.
+    private struct Format {
+        let fullRange: Bool
+        let configuration: VTTemporalNoiseFilterConfiguration
+        let sourcePool: CVPixelBufferPool
+        let destinationPool: CVPixelBufferPool
+        let outputPool: CVPixelBufferPool
+    }
 
     init(width: Int, height: Int, device: MTLDevice) throws {
         guard VTTemporalNoiseFilterConfiguration.isSupported,
-              let configuration = VTTemporalNoiseFilterConfiguration(
-                  frameWidth: width, frameHeight: height,
-                  sourcePixelFormat: kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange) else {
+              let probe = Self.configuration(width: width, height: height, fullRange: false) else {
             throw VideoError.unsupported("noise filter for \(width)x\(height)")
         }
-        self.configuration = configuration
-        previousCount = configuration.previousFrameCount ?? 0
-        nextCount = configuration.nextFrameCount ?? 0
+        self.width = width
+        self.height = height
+        previousCount = probe.previousFrameCount ?? 0
+        nextCount = probe.nextFrameCount ?? 0
         var session: VTPixelTransferSession?
         guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &session) == noErr, let session else {
             throw VideoError.reader("VTPixelTransferSessionCreate")
         }
         transfer = session
-        sourcePool = try Self.pool(configuration.sourcePixelBufferAttributes)
-        destinationPool = try Self.pool(configuration.destinationPixelBufferAttributes)
-        outputPool = try Self.pool([
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
-            kCVPixelBufferMetalCompatibilityKey as String: true,
-        ])
         var cache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
             throw VideoError.reader("CVMetalTextureCacheCreate")
         }
         self.cache = cache
-        try processor.startSession(configuration: configuration)
     }
 
-    deinit { Self.end(processor) }
+    deinit { if started { Self.end(processor) } }
+
+    private static func configuration(width: Int, height: Int, fullRange: Bool) -> VTTemporalNoiseFilterConfiguration? {
+        VTTemporalNoiseFilterConfiguration(
+            frameWidth: width, frameHeight: height,
+            sourcePixelFormat: fullRange ? kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange
+                                         : kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange)
+    }
+
+    /// The pools and the first session for frames of this range; a later frame of
+    /// the other range is refused rather than range-converted.
+    private func format(for fullRange: Bool) throws -> Format {
+        if let format {
+            guard format.fullRange == fullRange else { throw VideoError.reader("noise filter: frames changed range") }
+            return format
+        }
+        guard let configuration = Self.configuration(width: width, height: height, fullRange: fullRange) else {
+            throw VideoError.unsupported("noise filter for \(width)x\(height) (\(fullRange ? "full" : "limited") range)")
+        }
+        let made = Format(
+            fullRange: fullRange, configuration: configuration,
+            sourcePool: try Self.pool(configuration.sourcePixelBufferAttributes),
+            destinationPool: try Self.pool(configuration.destinationPixelBufferAttributes),
+            outputPool: try Self.pool([
+                kCVPixelBufferPixelFormatTypeKey as String: fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                                                      : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+            ]))
+        try processor.startSession(configuration: configuration)
+        started = true
+        format = made
+        return made
+    }
 
     /// A new session for a new chain: a session never accepts a repeated or
     /// earlier timestamp (it hung, 2026-11-04), and its state carries the chain.
     func restart() throws {
+        guard let format else { return }   // no frame yet: the first one starts the first session
         let fresh = VTFrameProcessor()
-        try fresh.startSession(configuration: configuration)
+        try fresh.startSession(configuration: format.configuration)
         Self.end(processor)
         processor = fresh
     }
@@ -72,7 +108,7 @@ final class Denoiser {
 
     /// `frame` in the filter's own format (lossless, so converting again gives the same bytes).
     func source(_ frame: DecodedFrame) throws -> CVPixelBuffer {
-        let out = try Self.make(sourcePool)
+        let out = try Self.make(try format(for: frame.fullRange).sourcePool)
         let status = VTPixelTransferSessionTransferImage(transfer, from: frame.pixelBuffer, to: out)
         guard status == noErr else { throw VideoError.reader("noise filter input conversion: \(status)") }
         return out
@@ -85,7 +121,8 @@ final class Denoiser {
         func wrap(_ b: CVPixelBuffer, _ t: CMTime) throws -> VTFrameProcessorFrame {
             try XUnwrap(VTFrameProcessorFrame(buffer: b, presentationTimeStamp: t), "noise filter frame")
         }
-        let destination = try wrap(try Self.make(destinationPool), frame.presentationTime)
+        let f = try format(for: frame.fullRange)
+        let destination = try wrap(try Self.make(f.destinationPool), frame.presentationTime)
         guard let parameters = VTTemporalNoiseFilterParameters(
             sourceFrame: try wrap(source, frame.presentationTime), nextFrames: try next.map(wrap),
             previousFrames: try previous.map(wrap), destinationFrame: destination,
@@ -105,7 +142,7 @@ final class Denoiser {
             throw VideoError.reader("noise filter did not finish frame \(frame.index) within 10 s")
         }
         if let failure { throw failure }
-        let out = try Self.make(outputPool)
+        let out = try Self.make(f.outputPool)
         let status = VTPixelTransferSessionTransferImage(transfer, from: destination.buffer, to: out)
         guard status == noErr else { throw VideoError.reader("noise filter output conversion: \(status)") }
         return try DecodedFrame(index: frame.index, presentationTime: frame.presentationTime, pixelBuffer: out, cache: cache)

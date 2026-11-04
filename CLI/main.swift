@@ -35,7 +35,7 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
                --cover-format jpeg. Existing files are an error unless --cover-overwrite.
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
-  Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
+  Input must be 8-bit 4:2:0 BT.709, limited or full range. After writing, the output is checked
   (timestamps, BT.709 tags, audio, sampled frames); a failed check exits with status 1
   and keeps the file.
 """

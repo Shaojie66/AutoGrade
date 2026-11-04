@@ -41,7 +41,8 @@ final class DisplayFrameTests: XCTestCase {
             XCTAssertLessThan(Double(off) / Double(w * h), 0.001, "float rounding only at .5 ties")
 
             // Colour: decoding it with our own convention gives the source back without bias.
-            let back = try engine.kernels.yuvToRGB(luma: try texture(pb, 0, .r8Unorm, engine), chroma: try texture(pb, 1, .rg8Unorm, engine)).floats()
+            let back = try engine.kernels.yuvToRGB(luma: try texture(pb, 0, .r8Unorm, engine), chroma: try texture(pb, 1, .rg8Unorm, engine),
+                                                   fullRange: false).floats()   // display frames are '420v'
             var bias = [0.0, 0.0, 0.0]
             for i in 0..<(w * h) {
                 let s = source(i % w)

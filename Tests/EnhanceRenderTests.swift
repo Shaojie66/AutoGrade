@@ -80,7 +80,7 @@ final class EnhanceRenderTests: XCTestCase {
             let frame = try engine.decodeFrame(person, analysis: a, index: i)
             let lut = a.luts[a.shotIndex(forFrame: i)]
             try engine.metal.run { enc in
-                try engine.kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut, scratch: planes,
+                try engine.kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, fullRange: frame.fullRange, lut: lut, scratch: planes,
                                                     graded: manual.graded, original: nil, background: (mask, scratch))
             }
             try engine.preview(try engine.decodeFrame(person, analysis: a, index: i, enhancer: enhancer), lut: lut, into: targets)

@@ -183,7 +183,7 @@ public final class AutoGrader {
     /// shot-detection thumbnail.
     private func analyzeFrame(_ frame: DecodedFrame, lutSize: Int, predictor: LUTPredictor, thumbnail: Bool,
                               times: inout StageTimes, clock: inout Clock) throws -> (LUT3D, [Float]?) {
-        let rgb = try kernels.yuvToRGB(luma: frame.luma, chroma: frame.chroma)
+        let rgb = try kernels.yuvToRGB(luma: frame.luma, chroma: frame.chroma, fullRange: frame.fullRange)
         times.convert += clock.lap()
         let small = try kernels.resize(rgb, width: Grader.inputSide, height: Grader.inputSide)
         let thumb = thumbnail
@@ -315,10 +315,10 @@ public final class AutoGrader {
         let denoised = frame.frame.pixelBuffer !== frame.source.pixelBuffer
         try metal.run { enc in
             if denoised {
-                try kernels.encodeYUVToRGB(into: enc, luma: frame.source.luma, chroma: frame.source.chroma, output: targets.scratch.rgb)
+                try kernels.encodeYUVToRGB(into: enc, luma: frame.source.luma, chroma: frame.source.chroma, fullRange: frame.source.fullRange, output: targets.scratch.rgb)
                 try kernels.encodeWriteBGRA8(into: enc, targets.scratch.rgb, to: targets.original)
             }
-            try kernels.encodeGradeFrame(into: enc, luma: frame.frame.luma, chroma: frame.frame.chroma, lut: lut,
+            try kernels.encodeGradeFrame(into: enc, luma: frame.frame.luma, chroma: frame.frame.chroma, fullRange: frame.frame.fullRange, lut: lut,
                                          scratch: targets.scratch, graded: targets.graded,
                                          original: denoised ? nil : targets.original,
                                          background: frame.background, overlay: overlay)
@@ -337,7 +337,7 @@ public final class AutoGrader {
         let f = frame.frame
         let overlay = try subtitles?.overlay(at: f.presentationTime.seconds)
         try metal.run { enc in
-            try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
+            try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, fullRange: f.fullRange, lut: lut, scratch: targets.scratch,
                                          crop: path.origins[f.index], length: path.length, cropped: targets.cropped,
                                          output: targets.output, background: frame.background, overlay: overlay)
         }
@@ -346,7 +346,7 @@ public final class AutoGrader {
     /// A small graded picture for the shot list: resized *before* grading, so it
     /// is an approximation of the frame, not the frame (that is `preview`).
     public func thumbnail(_ frame: DecodedFrame, lut: LUT3D, width: Int) throws -> MTLTexture {
-        let rgb = try kernels.yuvToRGB(luma: frame.luma, chroma: frame.chroma)
+        let rgb = try kernels.yuvToRGB(luma: frame.luma, chroma: frame.chroma, fullRange: frame.fullRange)
         let height = max(2, Int((Double(width) * Double(rgb.height) / Double(rgb.width)).rounded()))
         let small = try kernels.resize(rgb, width: width, height: height)
         let graded = try kernels.applyLUT(small, lut)
@@ -394,12 +394,12 @@ public final class AutoGrader {
                 let overlay = try subtitles?.overlay(at: frame.presentationTime.seconds)
                 try metal.run { enc in
                     if let reframe, let cropped {
-                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
+                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, fullRange: frame.fullRange, lut: lut,
                                                      scratch: scratch, crop: reframe.origins[frame.index],
                                                      length: reframe.length, cropped: cropped, output: texture,
                                                      background: enhanced.background, overlay: overlay)
                     } else {
-                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
+                        try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, fullRange: frame.fullRange, lut: lut,
                                                      scratch: scratch, graded: texture, original: nil,
                                                      background: enhanced.background, overlay: overlay)
                     }
