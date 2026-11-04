@@ -156,6 +156,9 @@ extension AutoGrader {
             try Enhancer(settings: $0, width: analysis.info.width, height: analysis.info.height, kernels: kernels)
         }
         for k in ExportCheck.sampledShots(analysis.shots.count) {
+            // one pool per sample: at 5.3K each sample's buffers are ~0.6 GB and a command-line
+            // process has no run loop to drain them (2026-11-04: check peaked at 3.6 GB)
+            try autoreleasepool {
             let shot = analysis.shots[k], index = (shot.first + shot.last) / 2
             let sourceFrame = try decodeFrame(source, analysis: analysis, index: index, enhancer: enhancer, exact: true)
             let texture: MTLTexture
@@ -174,7 +177,7 @@ extension AutoGrader {
                                          frameTimes: analysis.frameTimes, checkingFormat: false)
             guard let decoded = try reader.next(), decoded.index == index else {
                 report.failures.append("shot \(k + 1): frame \(index) could not be decoded from the export")
-                continue
+                return
             }
             let rgb = try kernels.yuvToRGB(luma: decoded.luma, chroma: decoded.chroma, fullRange: decoded.fullRange).floats()
             let n = w * h
@@ -216,6 +219,7 @@ extension AutoGrader {
                 report.failures.append(String(format: "shot %d (frame %d) does not match its grade: mean %.2f levels, "
                                               + "bias R %+.2f G %+.2f B %+.2f", k + 1, index, frame.meanAbs,
                                               frame.bias[0], frame.bias[1], frame.bias[2]))
+            }
             }
         }
     }

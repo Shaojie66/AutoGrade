@@ -215,6 +215,18 @@ public final class VideoReader {
         return try DecodedFrame(index: index, presentationTime: pts, pixelBuffer: pixelBuffer, cache: cache)
     }
 
+    /// Every remaining frame, each inside its own autorelease pool: a frame's
+    /// Metal and CoreVideo objects (and the ~190 MB float image a 5.3K frame
+    /// converts to) are freed as it goes. Without it a command-line pass, which
+    /// has no run loop to drain the pool, grew to ~1 GB on 689 GoPro frames.
+    public func forEachFrame(_ body: (DecodedFrame) throws -> Void) throws {
+        while try autoreleasepool(invoking: {
+            guard let frame = try next() else { return false }
+            try body(frame)
+            return true
+        }) {}
+    }
+
     static func index(of time: CMTime, in times: [CMTime]) -> Int? {
         var lo = 0, hi = times.count - 1
         while lo <= hi {

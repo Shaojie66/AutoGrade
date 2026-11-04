@@ -153,7 +153,7 @@ public final class AutoGrader {
         }
 
         var clock = Clock()
-        while let frame = try reader.next() {
+        try reader.forEachFrame { frame in
             if cancel?.isCancelled == true { throw Cancelled() }
             times.decode += clock.lap()
             frameTimes.append(frame.presentationTime)
