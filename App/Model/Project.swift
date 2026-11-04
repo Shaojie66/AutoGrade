@@ -67,6 +67,18 @@ final class Project {
     private(set) var exportChecking = false      // the check after writing is running
     private(set) var lastExport: URL?
 
+    // covers (CLAUDE.md 封面)
+    var coverAspects: Set<CoverAspect> = Set(Cover.defaultAspects)
+    var coverFormat: CoverFormat = .png
+    /// Frames ticked for export; the top `Cover.defaultCount` after each scan or cut edit.
+    var coverChosen: Set<Int> = []
+    private(set) var selectedCover: Int?             // a frame index
+    var coverPreviewAspect: CoverAspect = .portrait3x4 {
+        didSet { refreshCoverPreview() }
+    }
+    private(set) var coverPreview: NSImage?
+    private(set) var coverThumbnails: [Int: NSImage] = [:]   // by frame
+
     private let engine: Engine?
     private var frameTask: Task<Void, Never>?
     private var pendingFrame: Int?
@@ -117,6 +129,10 @@ final class Project {
         strengths = []
         styles = []
         thumbnails = [:]
+        coverChosen = []
+        selectedCover = nil
+        coverPreview = nil
+        coverThumbnails = [:]
         display = nil
         playhead = 0
         phase = .analyzing(0)
@@ -318,6 +334,118 @@ final class Project {
         seek(min(Int(t * s.frameRate), s.frameCount - 1))
     }
 
+    // MARK: covers (CLAUDE.md 封面)
+
+    var covers: [Cover.Candidate]? { summary?.covers }
+
+    /// The first time: one pass over the video (busy, cancellable).
+    func findCovers() {
+        guard let engine, canEdit else { return }
+        stopPlaying()
+        busy = S.findingCovers
+        busyProgress = 0
+        Task {
+            do {
+                apply(try await engine.scanCovers { p in Task { @MainActor in self.busyProgress = p } }, keepThumbnails: true)
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.coversFailed, message: "\(error)")
+            }
+            busy = nil
+        }
+    }
+
+    /// New candidates (scan or cut edit): tick the top ones again, keep the selection if it is still a candidate.
+    private func coversChanged() {
+        guard let covers else { return }
+        coverChosen = Set(covers.prefix(Cover.defaultCount).map(\.frame))
+        if let f = selectedCover, !covers.contains(where: { $0.frame == f }) { selectedCover = nil }
+        coverThumbnails = [:]
+        refreshCoverThumbnails()
+        refreshCoverPreview()
+    }
+
+    func selectCover(_ frame: Int) {
+        selectedCover = frame
+        seek(frame)
+        refreshCoverPreview()
+    }
+
+    private func refreshCoverThumbnails() {
+        guard let engine, let covers else { return }
+        let shots = summary?.shots
+        for c in covers {
+            Task {
+                guard let image = try? await engine.thumbnail(frame: c.frame, shot: c.shot), summary?.shots == shots else { return }
+                coverThumbnails[c.frame] = NSImage(cgImage: image.value, size: NSSize(width: image.value.width, height: image.value.height))
+            }
+        }
+    }
+
+    private func refreshCoverPreview() {
+        guard let engine, let f = selectedCover, let c = covers?.first(where: { $0.frame == f }) else {
+            coverPreview = nil
+            return
+        }
+        let aspect = coverPreviewAspect
+        Task {
+            guard let image = try? await engine.coverPreview(c, aspect: aspect),
+                  selectedCover == f, coverPreviewAspect == aspect else { return }
+            coverPreview = NSImage(cgImage: image.value, size: NSSize(width: image.value.width, height: image.value.height))
+        }
+    }
+
+    /// The ticked covers in rank order, numbered by their rank in the list.
+    private var chosenCovers: [(rank: Int, candidate: Cover.Candidate)] {
+        (covers ?? []).enumerated().filter { coverChosen.contains($0.element.frame) }.map { ($0.offset + 1, $0.element) }
+    }
+
+    var canExportCovers: Bool { canEdit && !chosenCovers.isEmpty && !coverAspects.isEmpty }
+
+    /// Choose a folder, ask before replacing, write and check every cover.
+    func exportCovers() {
+        guard let engine, let source, canExportCovers else { return }
+        stopPlaying()
+        let folder = NSOpenPanel()
+        folder.canChooseDirectories = true
+        folder.canChooseFiles = false
+        folder.canCreateDirectories = true
+        folder.message = L(S.chooseCoverFolder)
+        folder.prompt = L(S.exportCoversButton)
+        folder.directoryURL = source.deletingLastPathComponent()
+        guard folder.runModal() == .OK, let dir = folder.url else { return }
+        let chosen = chosenCovers, format = coverFormat
+        let aspects = CoverAspect.allCases.filter(coverAspects.contains)
+        let names = Engine.coverNames(source: source, covers: chosen, aspects: aspects, format: format)
+        let existing = names.filter { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        if !existing.isEmpty {
+            let ask = NSAlert()
+            ask.messageText = L(S.replaceCoversTitle)
+            ask.informativeText = L(S.replaceCoversBody(existing.count))
+            ask.addButton(withTitle: L(S.replace))
+            ask.addButton(withTitle: L(S.cancel))
+            guard ask.runModal() == .alertFirstButtonReturn else { return }
+        }
+        busy = S.exportingCovers
+        busyProgress = 0
+        Task {
+            do {
+                let checks = try await engine.exportCovers(chosen, aspects: aspects, format: format, to: dir) { p in
+                    Task { @MainActor in self.busyProgress = p }
+                }
+                let failed = checks.filter { !$0.passed }
+                lastExport = checks.first?.url
+                alert = Alert(title: failed.isEmpty ? S.coversExported : S.coversCheckFailed,
+                              message: L(S.coversSummary(dir.path, count: checks.count,
+                                                         failures: failed.flatMap { c in c.failures.map { "\(c.url.lastPathComponent): \($0)" } })))
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.coversFailed, message: "\(error)")
+            }
+            busy = nil
+        }
+    }
+
     // MARK: enhancement (CLAUDE.md 画质增强)
 
     var enhance: EnhanceSettings { summary?.enhance ?? EnhanceSettings() }
@@ -392,6 +520,8 @@ final class Project {
 
     func strengthCommitted(shot k: Int) {
         refreshThumbnail(k)
+        refreshCoverPreview()
+        refreshCoverThumbnails()
     }
 
     // MARK: cut editing
@@ -483,10 +613,13 @@ final class Project {
     }
 
     private func apply(_ s: Summary, keepThumbnails: Bool = false) {
+        let old = summary
         summary = s
         strengths = s.strengths
         styles = s.styles
         showFrame(playhead)
+        if s.covers != old?.covers { coversChanged() }
+        else if s.styles != old?.styles || s.enhance != old?.enhance { refreshCoverPreview() }   // the cover's pixels changed
         if !keepThumbnails {   // a crop change does not change the graded thumbnails
             thumbnails = [:]
             refreshThumbnails()

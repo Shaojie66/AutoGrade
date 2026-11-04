@@ -195,6 +195,190 @@
     1.9,
     1.933333
   ],
+  "cover": {
+    "shots": [
+      [
+        0,
+        59
+      ],
+      [
+        60,
+        104
+      ],
+      [
+        105,
+        119
+      ]
+    ],
+    "faces": [
+      [
+        25,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        26,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        27,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        28,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        29,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        30,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        31,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        32,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        33,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        34,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        35,
+        0.5,
+        0.4,
+        0.25,
+        0.3
+      ],
+      [
+        80,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        81,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        82,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        83,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        84,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        85,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        86,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        87,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        88,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        89,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ],
+      [
+        90,
+        0.04,
+        0.5,
+        0.1,
+        0.1
+      ]
+    ],
+    "best": [
+      90,
+      25
+    ],
+    "best_without_faces": [
+      91,
+      21
+    ],
+    "resize": [
+      150,
+      84
+    ]
+  },
   "files": {
     "bg_blur": {
       "file": "bg_blur.f32",
@@ -331,6 +515,39 @@
       "note": "per-channel AdaInt vertices",
       "sha256": "da5b5957bdc9d36db0ca3ca1241c8bdd7387a9a6f42e2e05f7575717337154a2",
       "bytes": 396
+    },
+    "cover_features": {
+      "file": "cover_features.f32",
+      "dtype": "float32",
+      "shape": [
+        120,
+        6
+      ],
+      "note": "per frame: laplacian variance, hi, lo, mean, diff prev, diff next (float64 -> float32)",
+      "sha256": "00b8a9c484b74799691e14c02f22ad02ea543ff514ded3de60d4f9b087a30c10",
+      "bytes": 2880
+    },
+    "cover_resized": {
+      "file": "cover_resized.f32",
+      "dtype": "float32",
+      "shape": [
+        84,
+        150
+      ],
+      "note": "frame 0 luma resized to (150, 84), bilinear align_corners=False",
+      "sha256": "e571f49bc1b8c2fe10bf729772043e9586f94d935aeb6acb83446ff38028a0e0",
+      "bytes": 50400
+    },
+    "cover_scores": {
+      "file": "cover_scores.f32",
+      "dtype": "float32",
+      "shape": [
+        3,
+        120
+      ],
+      "note": "pick / rank with COVER_FACES, pick without faces; COVER_SHOTS; float64 -> float32",
+      "sha256": "e876f6add5d47c51d1008f42282deb7fd8229bf6a589964dcd39536fb13b229b",
+      "bytes": 1440
     },
     "crop_169": {
       "file": "crop_169.f32",
@@ -720,6 +937,18 @@
       "note": "gradients + moving disk, crf 6",
       "sha256": "8eeff3d7b9ad88465c2a796beb23d15e3f2ab4864e4a83fdb277626804b8a5e5",
       "bytes": 29439
+    },
+    "synthetic_cover.mp4": {
+      "file": "synthetic_cover.mp4",
+      "dtype": "h264",
+      "shape": [
+        120,
+        180,
+        320
+      ],
+      "note": "gym_b blurred | sharp | overexposed, dissolve to comic, comic still, comic panning 0.5 s",
+      "sha256": "0ad24764c28f0e49814544c7a17710e21f0fdfd2c6349921bc0bb315c92643b5",
+      "bytes": 118439
     },
     "synthetic_f15_cb": {
       "file": "synthetic_f15_cb.u8",

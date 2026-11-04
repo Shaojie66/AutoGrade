@@ -35,6 +35,17 @@ enum Fixtures {
         let crop_cases: [CropCase]
         let overlay_cases: [OverlayCase]
         let background_cases: [BackgroundCase]
+        let cover: CoverCase
+    }
+
+    /// Cover selection (CLAUDE.md 封面): explicit shots, made-up faces
+    /// [frame, cx, cy, w, h], the expected picks, and the extra resize case [w, h].
+    struct CoverCase: Decodable {
+        let shots: [[Int]]
+        let faces: [[Double]]
+        let best: [Int]
+        let best_without_faces: [Int]
+        let resize: [Int]
     }
 
     struct BackgroundCase: Decodable {
