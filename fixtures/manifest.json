@@ -691,6 +691,52 @@
       "sha256": "331ea9e686d1521e40417a7d0ccc0da6203359700250a6698ca19e35f5caa789",
       "bytes": 396
     },
+    "fullrange_f15_cb": {
+      "file": "fullrange_f15_cb.u8",
+      "dtype": "uint8",
+      "shape": [
+        90,
+        160
+      ],
+      "note": "decoder output plane, full range as coded",
+      "sha256": "2921eb9ec89e3bd56185a7b76a62623d8cba3c67fd1f6796a010328313cebb6b",
+      "bytes": 14400
+    },
+    "fullrange_f15_cr": {
+      "file": "fullrange_f15_cr.u8",
+      "dtype": "uint8",
+      "shape": [
+        90,
+        160
+      ],
+      "note": "decoder output plane, full range as coded",
+      "sha256": "8533338151d1d5879176583e568026ef71b5e4f4d3451bb8d8c9fab40ff0483e",
+      "bytes": 14400
+    },
+    "fullrange_f15_rgb": {
+      "file": "fullrange_f15_rgb.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        180,
+        320
+      ],
+      "note": "bt709 full range (H.273), chroma bilinear at (x/2, (y-0.5)/2), clamp",
+      "sha256": "b2995aa00fac61d00c39140af1c65f4af5f7f78c0a6d31668eafa5f54f8d46c0",
+      "bytes": 691200
+    },
+    "fullrange_f15_y": {
+      "file": "fullrange_f15_y.u8",
+      "dtype": "uint8",
+      "shape": [
+        180,
+        320
+      ],
+      "note": "decoder output plane, full range as coded",
+      "sha256": "42f7488f6dfc87042e55119729b19578199b40327cb280003d72d87eb0672919",
+      "bytes": 57600
+    },
     "gym_a_ailut_out": {
       "file": "gym_a_ailut_out.png",
       "dtype": "uint8",
@@ -995,6 +1041,18 @@
       "note": "decoder output plane",
       "sha256": "855a99d728415cb3eda45ec6115f33732288cfb94e917ebbfbe78d4c79d8cf17",
       "bytes": 57600
+    },
+    "synthetic_fullrange.mp4": {
+      "file": "synthetic_fullrange.mp4",
+      "dtype": "h264",
+      "shape": [
+        30,
+        180,
+        320
+      ],
+      "note": "testsrc2, 30 frames, H.264 full range (yuvj420p), bt709 tags",
+      "sha256": "86756bab252f728b41bf3e2e7eb94e019b0b1f6a1434c13feca9ece42097bc0f",
+      "bytes": 43639
     },
     "synthetic_noisy.mp4": {
       "file": "synthetic_noisy.mp4",

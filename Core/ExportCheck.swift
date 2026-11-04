@@ -176,7 +176,7 @@ extension AutoGrader {
                 report.failures.append("shot \(k + 1): frame \(index) could not be decoded from the export")
                 continue
             }
-            let rgb = try kernels.yuvToRGB(luma: decoded.luma, chroma: decoded.chroma).floats()
+            let rgb = try kernels.yuvToRGB(luma: decoded.luma, chroma: decoded.chroma, fullRange: decoded.fullRange).floats()
             let n = w * h
             var sumAbs = 0.0, bias = [0.0, 0.0, 0.0]
             for i in 0..<n {

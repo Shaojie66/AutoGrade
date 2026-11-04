@@ -52,7 +52,7 @@ final class VideoTests: XCTestCase {
 
     func testYUVToRGBMatchesConvention() throws {
         let f = try frame(15)
-        let rgb = try kernels.yuvToRGB(luma: f.luma, chroma: f.chroma).floats()
+        let rgb = try kernels.yuvToRGB(luma: f.luma, chroma: f.chroma, fullRange: f.fullRange).floats()
         let err = maxAbsDifference(rgb, try Fixtures.floats("synthetic_f15_rgb").values)
         print("yuv→rgb frame 15: max \(err)")
         XCTAssertLessThanOrEqual(err, 1e-5)

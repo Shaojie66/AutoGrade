@@ -16,20 +16,24 @@
 using namespace metal;
 
 // ------------------------------------------------------------------ decode --
-// BT.709 limited range, 8-bit 4:2:0 -> planar RGB in [0,1]. The convention is
+// BT.709 limited or full range, 8-bit 4:2:0 -> planar RGB in [0,1]. The convention is
 // CLAUDE.md 架构原则 4 and research/make_fixtures.py::yuv709_to_rgb. Textures
 // are the decoder's planes (r8Unorm luma, rg8Unorm interleaved CbCr); rint
 // recovers the exact integer code from the unorm read.
 kernel void yuv420_to_rgb(texture2d<float, access::read> lumaTex   [[texture(0)]],
                           texture2d<float, access::read> chromaTex [[texture(1)]],
                           device float *rgb                        [[buffer(0)]],
+                          constant uint &fullRange                 [[buffer(1)]],
                           uint2 g                                  [[thread_position_in_grid]])
 {
     const uint w = lumaTex.get_width(), h = lumaTex.get_height();
     if (g.x >= w || g.y >= h) return;
     const uint wc = chromaTex.get_width(), hc = chromaTex.get_height();
 
-    const float y = (rint(lumaTex.read(g).r * 255.0f) - 16.0f) / 219.0f;
+    // limited: (Y - 16) / 219, (C - 128) / 224; full (H.273): Y / 255, (C - 128) / 255
+    const float yCode = rint(lumaTex.read(g).r * 255.0f);
+    const float y = fullRange ? yCode / 255.0f : (yCode - 16.0f) / 219.0f;
+    const float cScale = fullRange ? 255.0f : 224.0f;
 
     // chroma sample (i, j) sits at luma (2i, 2j + 0.5)
     const float cx = clamp(float(g.x) * 0.5f, 0.0f, float(wc - 1));
@@ -44,8 +48,8 @@ kernel void yuv420_to_rgb(texture2d<float, access::read> lumaTex   [[texture(0)]
     const float2 top = c00 * (1.0f - fx) + c10 * fx;
     const float2 bot = c01 * (1.0f - fx) + c11 * fx;
     const float2 c = top * (1.0f - fy) + bot * fy;
-    const float u = (c.x - 128.0f) / 224.0f;
-    const float v = (c.y - 128.0f) / 224.0f;
+    const float u = (c.x - 128.0f) / cScale;
+    const float v = (c.y - 128.0f) / cScale;
 
     const uint i = g.y * w + g.x, n = w * h;
     rgb[i]         = clamp(y + 1.5748f * v, 0.0f, 1.0f);
