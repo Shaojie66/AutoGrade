@@ -1,4 +1,5 @@
 import AutoGradeCore
+import CoreText
 import XCTest
 
 /// Rasterised subtitles: checked by properties that do not depend on the OS's
@@ -46,6 +47,14 @@ final class SubtitleRendererTests: XCTestCase {
         let margin = 2 * (Double(long.fontSize) * 0.2 + 3)
         XCTAssertLessThanOrEqual(Double(long.width) - margin, 1920 * 0.85, "the text itself fits 85% of the frame")
         XCTAssertGreaterThanOrEqual(long.origin.x, 0)
+    }
+
+    /// The bundled Source Han Sans is what draws, not a silent fallback (CLAUDE.md 字幕 / 许可与素材).
+    func testBundledFontIsUsed() {
+        XCTAssertTrue(SubtitleRenderer.fontRegistered)
+        let font = CTFontCreateWithName(SubtitleRenderer.fontName as CFString, 40, nil)
+        XCTAssertEqual(CTFontCopyPostScriptName(font) as String, "SourceHanSansCN-Bold")
+        XCTAssertEqual(CTFontCopyFamilyName(font) as String, "Source Han Sans CN")
     }
 
     func testEmptyCueDrawsNothing() {

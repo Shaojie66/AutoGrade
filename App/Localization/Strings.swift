@@ -1,3 +1,4 @@
+import AutoGradeCore
 import Foundation
 
 /// Every string the interface shows (CLAUDE.md: no bare strings in views).
@@ -101,6 +102,48 @@ enum S {
     static let coverShortShots = Copy(en: "Shots shorter than 1 s are not considered.", zh: "短于 1 秒的镜头不参加评选。")
     static let coverInclude = Copy(en: "Export this cover", zh: "导出这张封面")
     static let coverShapes = Copy(en: "Shapes", zh: "画幅")
+    static let coverTitle = Copy(en: "Title", zh: "标题")
+    static let coverSubtitle = Copy(en: "Subtitle (optional)", zh: "副标题（可不填）")
+    static let coverTemplate = Copy(en: "Layout", zh: "版式")
+    static let templateBottom = Copy(en: "Bottom", zh: "底部")
+    static let templateCorner = Copy(en: "Corner", zh: "左上")
+    static let templateCenter = Copy(en: "Centre", zh: "居中")
+    // title candidates (CLAUDE.md 封面 / 云端候选)
+    static let titleSuggestionsSection = Copy(en: "Cover title candidates", zh: "封面标题候选")
+    static let useDeepSeek = Copy(en: "Suggest titles with DeepSeek", zh: "使用 DeepSeek 生成标题候选")
+    static let deepSeekKey = Copy(en: "DeepSeek API key", zh: "DeepSeek API key")
+    static let saveKey = Copy(en: "Save Key", zh: "保存 key")
+    static let deleteKey = Copy(en: "Delete Key", zh: "删除 key")
+    static let keySaved = Copy(en: "A key is saved in the Keychain.", zh: "已有 key 保存在钥匙串中。")
+    static let keyNotSaved = Copy(en: "No key saved.", zh: "未保存 key。")
+    static let titleSuggestionsNote = Copy(
+        en: "Only text is sent to DeepSeek: your description and the video's subtitles (first 2,000 characters). No pictures, file names or paths. Requests are billed to your own DeepSeek account.",
+        zh: "只把文字发给 DeepSeek：你写的描述和这段视频的字幕（前 2000 字），不发画面、文件名或路径。费用记在你自己的 DeepSeek 账户。")
+    static let titleSuggestionsOff = Copy(en: "Title candidates from DeepSeek can be turned on in Settings.", zh: "可在设置里开启 DeepSeek 标题候选。")
+    static let titleTopic = Copy(en: "Description for candidates (optional)", zh: "给候选的描述（可不填）")
+    static let suggestTitles = Copy(en: "Suggest Titles", zh: "生成候选")
+    static let anotherBatch = Copy(en: "Another Batch", zh: "换一批")
+    static func titleWillSend(_ topic: Int, _ subtitles: Int) -> Copy {
+        Copy(en: "Sends: description \(topic) chars, subtitles \(subtitles) chars (no pictures)",
+             zh: "将发送：描述 \(topic) 字、字幕 \(subtitles) 字（不发画面）")
+    }
+    static let titleThinHint = Copy(en: "Without subtitles the candidates come out alike; add a few sentences or recognise the subtitles first.",
+                                    zh: "没有字幕时候选会很相近，可以补充几句描述，或先识别字幕。")
+    static let titleCheckFacts = Copy(en: "Check the facts before using one. Click to put it in the title.", zh: "请核对内容后再用，点一下填进标题。")
+    static let titleNeedsKey = Copy(en: "Save a DeepSeek key in Settings first.", zh: "请先在设置里保存 DeepSeek key。")
+    static func titleError(_ e: TitleSuggestionError) -> Copy {
+        switch e {
+        case .noInput: return Copy(en: "Nothing to base titles on: write a description or add subtitles.", zh: "没有可用的文字：请写几句描述，或先添加字幕。")
+        case .http(401, _): return Copy(en: "DeepSeek refused the key (401). Check it in Settings.", zh: "DeepSeek 拒绝了这个 key（401），请在设置里检查。")
+        case .http(402, _): return Copy(en: "The DeepSeek account has no balance left (402).", zh: "DeepSeek 账户余额不足（402）。")
+        case .http(429, _): return Copy(en: "DeepSeek is limiting requests (429); try again shortly.", zh: "DeepSeek 正在限流（429），稍后再试。")
+        case .http(let status, _): return Copy(en: "DeepSeek answered \(status).", zh: "DeepSeek 返回了 \(status)。")
+        case .badResponse: return Copy(en: "DeepSeek's reply was not usable, twice. Try again.", zh: "DeepSeek 两次都没给出可用的结果，请再试一次。")
+        case .noUsableTitles: return Copy(en: "No usable candidates (all too long or repeated). Try another batch.", zh: "没有可用的候选（都太长或重复了），可以换一批。")
+        case .network: return Copy(en: "Could not reach DeepSeek. Check the network.", zh: "连不上 DeepSeek，请检查网络。")
+        }
+    }
+    static let titleOverlapsFace = Copy(en: "The title overlaps the face here; try another layout.", zh: "标题压到了人脸，可以换一种版式。")
     static let coverOriginal = Copy(en: "Original", zh: "原画幅")
     static let coverFormat = Copy(en: "Format", zh: "格式")
     static let coverPreviewTitle = Copy(en: "Preview shape", zh: "预览画幅")

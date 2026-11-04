@@ -91,8 +91,9 @@ actor Engine {
     nonisolated let styles: [Style]
     nonisolated let styleWarnings: [String]
 
-    init() throws {
-        core = try AutoGrader()
+    /// `stylesDirectory` nil grades with FiveK only (AppTests).
+    init(stylesDirectory: URL? = StyleCatalog.defaultDirectory) throws {
+        core = try AutoGrader(stylesDirectory: stylesDirectory)
         styles = core.catalog.styles
         styleWarnings = core.catalog.warnings
     }
@@ -405,7 +406,8 @@ actor Engine {
 
     /// The cover's exact pixels (the file's, before encoding) at the current
     /// strengths and enhancements; denoise from the shot's start like the export.
-    private func coverPixels(_ c: Cover.Candidate, aspect: CoverAspect) throws -> (bgra: [UInt8], width: Int, height: Int) {
+    private func coverPixels(_ c: Cover.Candidate, aspect: CoverAspect, title: CoverTitle?) throws
+        -> (bgra: [UInt8], width: Int, height: Int, overlapsFace: Bool) {
         guard let source, let a = analysis, let scan = coverScan else { throw VideoError.reader("no cover scan") }
         let frame = try core.decodeFrame(source, analysis: a, index: c.frame, enhancer: enhancer, exact: true)
         let (sw, sh) = (a.info.width, a.info.height)
@@ -418,13 +420,19 @@ actor Engine {
         }
         let centre = Cover.center(frame: c.frame, track: scan.track, shot: a.shots[c.shot])
         let (w, h) = aspect.outputSize(sourceWidth: a.info.width, sourceHeight: a.info.height)
-        return (try core.renderCover(frame, lut: finals[c.shot], aspect: aspect, center: centre, into: targets), w, h)
+        let made = try title.flatMap {
+            try core.coverTitleOverlay($0, aspect: aspect, sourceWidth: sw, sourceHeight: sh, center: centre,
+                                       face: scan.track.samples[c.frame])
+        }
+        let bgra = try core.renderCover(frame, lut: finals[c.shot], aspect: aspect, center: centre, into: targets,
+                                        title: made?.overlay)
+        return (bgra, w, h, made?.overlapsFace ?? false)
     }
 
     /// The cover as it will be written, tagged sRGB like the file (CLAUDE.md 封面 / 文件).
-    func coverPreview(_ c: Cover.Candidate, aspect: CoverAspect) throws -> Unchecked<CGImage> {
-        let (bgra, w, h) = try coverPixels(c, aspect: aspect)
-        return Unchecked(value: try Self.image(bgra: bgra, width: w, height: h, space: CGColorSpace.sRGB))
+    func coverPreview(_ c: Cover.Candidate, aspect: CoverAspect, title: CoverTitle?) throws -> (Unchecked<CGImage>, overlapsFace: Bool) {
+        let (bgra, w, h, overlaps) = try coverPixels(c, aspect: aspect, title: title)
+        return (Unchecked(value: try Self.image(bgra: bgra, width: w, height: h, space: CGColorSpace.sRGB)), overlaps)
     }
 
     /// A small graded picture of one frame for the cover list (an approximation, like the shot list's).
@@ -432,6 +440,15 @@ actor Engine {
         guard let source, let a = analysis, k < finals.count else { throw VideoError.reader("no such frame") }
         let texture = try core.thumbnail(try core.decodeFrame(source, analysis: a, index: index), lut: finals[k], width: width)
         return Unchecked(value: try Self.image(texture))
+    }
+
+    /// What a title suggestion would send for this video: the topic, the current
+    /// subtitles, the length limit for `aspects` at this frame size (CLAUDE.md 封面 / 云端候选).
+    /// The request itself is made by `Project`, off this queue.
+    func titleRequest(topic: String, aspects: [CoverAspect], exclude: [String]) -> TitleRequest? {
+        guard let a = analysis else { return nil }
+        return TitleRequest(topic: topic, cues: cues, aspects: aspects, sourceWidth: a.info.width, sourceHeight: a.info.height,
+                            exclude: exclude)
     }
 
     nonisolated static func coverNames(source: URL, covers: [(rank: Int, candidate: Cover.Candidate)],
@@ -446,7 +463,7 @@ actor Engine {
     /// Write the chosen covers into `directory` and check each (CLAUDE.md 封面 / 写完自检).
     /// Replacing existing files was confirmed in the interface. Cancellable between files.
     func exportCovers(_ covers: [(rank: Int, candidate: Cover.Candidate)], aspects: [CoverAspect], format: CoverFormat,
-                      to directory: URL, progress: @escaping @Sendable (Double) -> Void) throws -> [CoverCheck] {
+                      title: CoverTitle?, to directory: URL, progress: @escaping @Sendable (Double) -> Void) throws -> [CoverCheck] {
         guard let source else { throw VideoError.reader("no video is open") }
         let token = control.begin()
         defer { control.end(token) }
@@ -456,7 +473,7 @@ actor Engine {
         for item in covers {
             for aspect in aspects {
                 if token.isCancelled { throw Cancelled() }
-                let (bgra, w, h) = try coverPixels(item.candidate, aspect: aspect)
+                let (bgra, w, h, _) = try coverPixels(item.candidate, aspect: aspect, title: title)
                 checks.append(try CoverWriter.write(bgra: bgra, width: w, height: h, to: directory.appendingPathComponent(names[n]),
                                                     format: format, overwrite: true))
                 n += 1

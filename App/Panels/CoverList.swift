@@ -17,8 +17,15 @@ struct CoverList: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .frame(minHeight: 140)
                 Divider()
-                controls.padding(10)
+                // Scrolls instead of growing: unrolled, the title and candidate controls are taller
+                // than the sidebar, and a fixed-height stack made the window grow off screen
+                // (2026-11-04, the owner could not reach "Another Batch").
+                ScrollView {
+                    controls.padding(10)
+                }
+                .frame(minHeight: 160, maxHeight: 420)
             }
         } else {
             VStack(spacing: 12) {
@@ -40,6 +47,20 @@ struct CoverList: View {
                         .toggleStyle(.checkbox)
                 }
             }
+            Text(L(S.coverTitle)).font(.caption).foregroundStyle(.secondary)
+            TextField(L(S.coverTitle), text: $project.coverTitleText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(L(S.coverTitle))
+            TextField(L(S.coverSubtitle), text: $project.coverSubtitleText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(L(S.coverSubtitle))
+            titleCandidates
+            Picker(L(S.coverTemplate), selection: $project.coverTemplate) {
+                Text(L(S.templateBottom)).tag(CoverTitleTemplate.bottom)
+                Text(L(S.templateCorner)).tag(CoverTitleTemplate.corner)
+                Text(L(S.templateCenter)).tag(CoverTitleTemplate.center)
+            }
+            .pickerStyle(.segmented)
             Picker(L(S.coverFormat), selection: $project.coverFormat) {
                 Text("PNG").tag(CoverFormat.png)
                 Text("JPEG").tag(CoverFormat.jpeg)
@@ -52,6 +73,41 @@ struct CoverList: View {
             Button(L(S.exportCoversButton)) { project.exportCovers() }
                 .disabled(!project.canExportCovers)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    /// DeepSeek candidates (CLAUDE.md 封面 / 云端候选 / App), only once turned on with a key saved.
+    @ViewBuilder private var titleCandidates: some View {
+        if project.titleSettings.enabled && project.titleSettings.hasKey {
+            DisclosureGroup(L(S.titleSuggestionsSection)) {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField(L(S.titleTopic), text: $project.coverTopicText)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel(L(S.titleTopic))
+                    HStack {
+                        Button(L(S.suggestTitles)) { project.suggestTitles() }
+                            .disabled(!project.canSuggestTitles)
+                        Button(L(S.anotherBatch)) { project.suggestTitles(anotherBatch: true) }
+                            .disabled(!project.canSuggestTitles || project.offeredTitles.isEmpty)
+                        if project.suggestingTitles { ProgressView().controlSize(.small) }
+                    }
+                    let counts = project.titleSendCounts
+                    Text(L(S.titleWillSend(counts.topic, counts.subtitles))).font(.caption).foregroundStyle(.secondary)
+                    if project.titleInputIsThin { Text(L(S.titleThinHint)).font(.caption).foregroundStyle(.secondary) }
+                    if let error = project.titleSuggestionError { Text(error).font(.caption).foregroundStyle(.orange) }
+                    if !project.titleCandidates.isEmpty {
+                        Text(L(S.titleCheckFacts)).font(.caption).foregroundStyle(.secondary)
+                        ForEach(project.titleCandidates, id: \.self) { t in
+                            Button(t) { project.useTitleCandidate(t) }
+                                .buttonStyle(.link)
+                                .accessibilityLabel(t)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+        } else {
+            Text(L(S.titleSuggestionsOff)).font(.caption).foregroundStyle(.secondary)
         }
     }
 

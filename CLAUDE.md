@@ -55,7 +55,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 - 断句（纯函数 `Subtitles.cues`，实测后在此更新）：停顿 ≥0.6 s 或句末标点断开；每行上限 原始/16:9 中文 16 字、英文 42 字符，9:16 中文 12 字、英文 32 字符；中文每条一行、英文最多两行（识别器给中文的字与字之间没有停顿，两行时字幕会一直攒到 6 s 上限，2026-11-04）；超长或超过 6 s 时，在最近的逗号后断，没有逗号就在最后 5 个字里间隔最大处断；切点前后 0.3 s 内有停顿（≥0.1 s）或标点时，在停顿最长处断开，每个切点最多断一次；连续说话没有停顿就让字幕跨过切点，不拆词（中文按单字返回词元，每个字间都算“词边界”，2026-11-04 曾把“篮球馆”切成 40 ms 的单字字幕）；最短 0.8 s，尾部多停 0.2 s，均不超过下一条开始前 2 帧；相邻间隔 ≥2 帧。中文词元之间不加空格。
 - SRT：UTF-8 无 BOM、CRLF；开始时间毫秒向下取整、结束向上取整；同时支持 WebVTT。导入宽松（LF/CRLF、BOM、跳号、`,` 或 `.`），坏条目报行号后跳过。时间与来源时间轴一致（导出保留来源时间戳，重构图后同样适用）。导出时视频旁写同名 `.srt`，已存在先问。
 - 烧录：YUV→RGB → LUT →（重构图）裁切缩放 → 叠加字幕 → BGRA。CoreText 每条字幕画一次并缓存（白字、黑描边为字号 8%、轻阴影）。字号：原始/16:9 为高度 5.5%，底边距下沿 8%；9:16 为宽度 5.5%，中心在高度约 70% 处避开平台底部界面（主人决定）；文字最宽 85%，超出缩小。预览“显示字幕”与导出同一编码路径；导出自检按同一字幕重算预期画面。
-- 字体：默认 PingFang SC（系统自带）；用于发布视频的许可结论见“许可与素材”。
+- 字体：思源黑体 CN Bold（`Resources/Fonts/`，随 Core 框架分发，SIL OFL 1.1；主人 2026-11-04 决定，原先是 PingFang SC Semibold）。字号、描边、阴影的比例不变。
 - 2026-11-04 实测（Pro，模型 zh_CN / en_US 已按主人同意用 `--download-speech-model` 下载）：
   - **不需要语音识别授权**：`SFSpeechRecognizer` 授权状态为“未决定”时 `SpeechTranscriber` 照常识别，Info.plist 不加 `NSSpeechRecognitionUsageDescription`。
   - **模型状态按进程登记**：CLI 下载后，测试进程与 App 查询仍是“需要下载”，但直接识别能用系统里已有的模型。所以 App 与 CLI 都先直接识别，失败了才提示下载（App 征得同意，CLI 提示 `--download-speech-model`），不以状态查询为准。
@@ -143,13 +143,56 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
   - 3:4 取整个画面高度、只平移不变焦。**更正（第二轮验收后）**：先前说“gym 人脸特写在 3:4 下头顶被裁”是误判——那一帧的头顶在原画面里就已出画（原画幅预览同样截断），3:4 只裁左右，没有多裁；人脸在 3:4 里偏右、面朝左，左侧留出视线空间。
   - gym 导出 + 背景虚化 + 封面：视频自检通过，封面背景与马已虚化、人脸清晰（`out/cover/gym_bg_vs.jpg`），与不开虚化的封面不同。
   - 变异检查：改权重、改过渡系数、选帧改用全片归一、封面不带背景、PNG 不比像素、去掉人脸贴边减半，6 处都被 `CoverTests` 抓到。
-- **封面标题**（主人 2026-11-04 决定：③ 本机贴字、② 本机模型、① 以主人输入为主）。规则先行，**实测通过并经主人确认前不写产品代码**：
+- **封面标题**（主人 2026-11-04 决定：③ 本机贴字、① 以主人输入为主；② 起初选本机模型，两台 Mac 都用不了后先改“只手动输入”，同日再改为**可选的 DeepSeek 云端候选，默认关闭**，见下面“云端候选”）。下面 Foundation Models 的规则保留：有可用本机模型的机器上它优先于云端：
   - **文字来源**：主人输入的标题为准。模型只给 3–5 个**候选**，主人点选或改写后才上封面；从不自动把模型的输出放上封面。没有可用模型时只能手动输入，不报错。
-  - **模型**：只用 macOS 26 自带的 Foundation Models（`SystemLanguageModel.default`，本机、无密钥、不上传）。不接云端模型。`availability` 不是 `.available`（设备不支持 / 未开启 Apple 智能 / 模型未就绪）时隐藏“生成候选”，不引导用户去改系统设置以外的东西；开启 Apple 智能属于系统配置，开发中要先问主人。
+  - **本机模型**：macOS 26 自带的 Foundation Models（`SystemLanguageModel.default`，本机、无密钥、不上传）。`availability` 不是 `.available`（设备不支持 / 未开启 Apple 智能 / 模型未就绪）时隐藏“生成候选”，不引导用户去改系统设置以外的东西；开启 Apple 智能属于系统配置，开发中要先问主人。
   - **只给模型文字**：macOS 26.2 SDK 的 Foundation Models 没有图片输入。给模型的只有：主人输入的主题词（可选）、该视频的字幕文本（有的话，截断到上限）、以及可选的画面标签（Vision `VNClassifyImageRequest` 对封面帧的分类结果，系统自带）。画面标签是否会让模型编造内容，实测后决定用不用。
+  - **云端候选（DeepSeek，主人 2026-11-04 决定）**：
+    - **默认关闭**；主人在设置里打开并填入自己的 API key 后才可用。没有 key、没联网或请求失败时只提示失败，手动输入照常可用；不重试刷屏（最多重试 1 次，见下）。
+    - **发出去的只有文字**：主题词（可选）、字幕文本（有的话，截到前 2000 字）、可选的画面标签。**不发画面**、文件名、路径、帧号、机器或账户信息。界面在“生成候选”按钮旁写明会发送哪些内容。
+    - **密钥**：App 里由主人在设置中输入，存 macOS 钥匙串（generic password，service `dev.chenshaojie.autograde.deepseek`），不进 UserDefaults、代码、提交、日志与报错文字；CLI 只读环境变量 `DEEPSEEK_API_KEY`，不接受命令行参数传 key。开发中 Claude 不读取、不打印、不保存 key 的值。
+    - **接口**（2026-11-04 核实 `api-docs.deepseek.com`）：OpenAI 格式 `POST https://api.deepseek.com/chat/completions`，模型 `deepseek-flash`（DeepSeek-V4.1-Flash）；`thinking: {type: disabled}`（默认开着，关掉才快，且思考模式下 `temperature` 不生效）；JSON 输出 `response_format: {type: json_object}`，提示里必须出现 “json” 并给格式示例；`max_tokens` 300；超时 15 s。JSON 模式偶尔返回空白内容，空白或解析失败时重试 1 次。价格（每百万 token，闲时 / 忙时）：输入未命中缓存 $0.15 / $0.30，输出 $0.60 / $1.20；起一次标题约几百 token。
+    - 只用标准库 `URLSession`，不引入第三方 SDK；调用写在 `Core/TitleSuggester.swift`，App 只做界面（原则 6）。
+    - **产品做法（主人 2026-11-04 决定做，按第二轮结论）**：用第二轮的提示词；**不发画面标签**；每次要 5 个候选。结果过滤：去掉首尾空白，丢弃空的、超长的（不截断凑数）、重复的、已经给过的；全被丢弃时报“没有可用候选”。“换一批”把这次会话里已经给过的候选随请求发回，要求换新的，不靠调温度（`temperature` 固定 1.0）。没有字幕、只有主题词时请求照发，但界面提示“只给主题词时候选会很相近，可补充几句描述或先识别字幕”。内容空白或不是预期的 JSON 时重试 1 次；HTTP 错误（401 key 无效、402 余额不足、429 限流、5xx）不重试，报错只含状态码与服务端给的简短说明，**从不含 key**。
+    - **CLI**：`--cover-suggest-titles` 只打印候选然后退出，不分析、不导出（候选须主人挑过才上封面，挑好后用 `--cover-title` 再跑）。文字：`--cover-topic 文字`（可选）+ 字幕（`--subtitle-file`，没给时找视频旁同名 `.srt`）；`--cover-exclude "a;b"` 传已经给过的（换一批）。字数上限：`--cover-aspects` 含竖版（3:4）用 12，否则 16（`TitleRequest.limit(for:)`）。key 只读环境变量 `DEEPSEEK_API_KEY`，没设就报错、什么都不发。发送前先打印要发的内容概要（主题与字幕各多少字），只有主题词时打印“候选会很相近”。与 `-o` 同时给出时报错。
+      - CLI 真连网实测（2026-11-04，主人在 Terminal.app 跑 `out/cover/llm/cli_try.sh`，日志 `cli_try.log` 不含 key）：两次调用 1.33 s / 1.14 s 成功；字数统计（主题 17 / 7 字，字幕 0 / 48 字）、上限（含 3:4 → 12，只有 16:9 → 16）、“只有主题词”提示（第一次有、第二次没有）、字幕格式警告、换一批命令全部符合预期。内容：只给一句主题“一个人在篮球馆练投篮，灯只开了一半”时又出现“**半场**灯下的投篮练习”（曲解）和“安静**夜晚**”（新增事实），5 条里 2 条——第二轮的 0 曲解依赖输入里有更多上下文，提示词没有根治，界面的“请核对内容”必须保留。小隐患：换一批命令把候选放进双引号、用分号分隔，候选自带 `"` 或 `;` 时命令会坏（提示要求不加引号，概率低；App 用按钮，没有这个问题）。
+      - 之前几次“日志已写好”而文件不存在，是脚本在 `read -s` 读 key 时就退出了：在没有交互终端的环境里运行，读到空值，按设计什么都不发、不写日志。要在 Terminal.app / iTerm 里运行。
+    - **App**：
+      - 设置窗口加一节“封面标题候选”：开关“使用 DeepSeek 生成标题候选”（默认关，存 UserDefaults `titleSuggestions`，不是密钥）；key 用安全输入框（`SecureField`）输入，“保存”写钥匙串、“删除”从钥匙串移除，只显示“已保存 / 未保存”，**从不把 key 显示回界面**；说明文字写明只发文字、费用记在主人自己的 DeepSeek 账户。开关与 key 由 `App/Model/TitleSuggestionSettings.swift`（像 `Localization` 一样的共享可观察对象，UserDefaults 与钥匙串可替换）持有，设置窗口与封面页共用。
+      - 钥匙串读写经 `SecretStore`（`App/Service/SecretStore.swift`），实际实现是 `KeychainSecretStore`（generic password，service `dev.chenshaojie.autograde.deepseek`，account `api-key`）；AppTests 用内存实现，不碰真钥匙串。
+      - 封面页（开关打开且已保存 key 时）：输入框“给候选的描述（可不填）”；“生成候选”“换一批”按钮；按钮下写明“将发送：描述 N 字、字幕 M 字（不发画面）”；只有描述没有字幕时显示补充提示；候选列成按钮，点一下填进“标题”框（可再改），旁边写“请核对内容后再用”。开关关着时只显示一行“可在设置里开启 DeepSeek 标题候选”。打开新视频时清空候选与“已给过”。
+      - 侧栏下半部分（画幅、标题、版式、格式、候选、导出）放在可滚动区域里（最小 160、最大 420 点），列表至少 140 点：2026-11-04 主人亲手试时，展开“封面标题候选”把整个窗口撑高到屏幕外，点不到“换一批”。改成可滚动后，主人亲手确认能点到“换一批”（同日，Pro，Release 构建）。
+      - 联网请求不在 `Engine`（它的串行队列还要做预览与导出）里等；`Engine` 只按当前字幕与画面尺寸拼 `TitleRequest`，请求由 `Project` 用 `TitleSuggester` 发出，`TitleTransport` 可替换。报错显示 `TitleSuggestionError.description`（不含 key）。
+      - AppTests（不连网）：默认关时不发请求；开了没 key 时不发并提示；开了有 key 时请求带对描述、字幕、字数上限与 key（只在 Authorization 头），“换一批”带上已给过的，点候选会填进标题并让预览带上标题；401 的报错不含 key；key 不进 UserDefaults。
+    - **测试不连网**：发送请求经一个可替换的 `TitleTransport`，`TitleSuggesterTests` 用假的回包核对请求内容（地址、模型、关思考、JSON 模式、`max_tokens`、提示里有 “json”、字幕截到 2000 字、没有画面标签、key 只出现在 `Authorization` 头里）、过滤规则、重试次数与报错文字。真连网只在主人用自己的 key 时发生。
+    - **实测计划（`out/cover/llm/`，探针不进产品代码）**：与 Foundation Models 的计划相同的 5 组输入与指标（长度合规、语言合规、编造率人工逐条判、拒答），每组 `temperature 0` 两次（看是否一致）+ `temperature 1.0` 一次，gym / 草原两组另跑“带画面标签”；再加响应耗时与 token 用量。探针只发 Claude 写的测试文本，不发主人素材；key 由主人在自己的终端里设成 `DEEPSEEK_API_KEY`。结果记在本节，主人看过后再定是否写产品代码。
+    - **实测第一轮（2026-11-04，Pro，主人用自己的 key 跑 `out/cover/llm/run.sh`；日志 `out/cover/llm/run1.log`，不含 key）**：27 次请求全部第一次就成功（无空白 JSON、无需重试），0.69–1.43 s；每次输入 135–175 / 输出 35–49 token，合计约 5,500 token、费用不到 0.5 美分。135 条标题长度全部合规，英文口播也给了简体中文。
+      - 编造：0 条新增人名、地名、数字、品牌；**3 条曲解**——“灯只开了一半”被写成“半场灯光 / 半场灯下”（篮球里“半场”是半个球场）。
+      - 画面标签（Vision 分类）几乎没被用到，也没引出编造 → 产品里**不发画面标签**。
+      - 质量：多是照抄口播短语（“远处雪山和湖”“马很听话慢慢走”），只给主题词时 5 条近乎同义（“伊斯坦布尔日落美景 / 风光 / 景色 / 画面”）。`temperature 0` 两次结果也不一致（草原组相同、英文组全不同、gym 组 5 条里 3 条不同），候选不可复现。
+      - 结论：安全、快、便宜，但标题平淡；下一轮改提示词（提炼而非照抄、角度不同、不换原意）再测，明显改善才写产品代码。
+    - **实测第二轮（2026-11-04，新提示词：提炼不照抄、5 个角度、不改原意；不发画面标签；日志 `out/cover/llm/run2.log`，不含 key）**，与第一轮同口径（各 21 次请求 / 105 条，照抄 = 与口播共有的连续汉字 ≥4 且 ≥ 标题汉字的 60%，用第一轮 135 条校准，主题词与英文品牌名不计）：
+      - 照抄 37% → **13%**（草原组 22/30 → 1/30）；曲解 3 → **0**；**新增事实 0 → 2**（“一个人练投篮的夜晚”“一键导出视频和cube文件”）；擦边 2 条（“安静时光”与“声音特别响”相反、“省心又高效”属宣传语）。
+      - 5 条两两相似 48 → 58 对，主要是只给主题词的一组（10/10 对都像）；不重复标题 61 → 54；`temperature 1` 与 0 几乎一样，“再生成一次”拿不到新候选。
+      - 0.79–1.57 s，6,209 token（提示变长），费用仍可忽略。
+      - 结论（Claude）：第二轮提示可作为“候选”用，靠“主人挑选、可改写”兜底；界面要提示核对内容。若做产品：“换一批”把已给过的候选发回去要求换新的（不靠调温度）；只有主题词时提示补充文字或先识别字幕。是否写产品代码待主人决定。
   - **输出约束**：用 `@Generable` 结构化输出（候选数组），每条中文 ≤16 字（9:16 / 3:4 竖版 ≤12 字）；不得出现输入里没有的人名、地名、数字与品牌；超长或违规的候选丢弃，不截断凑数。
-  - **排版**：本机 CoreText 模板贴字，与字幕烧录同一套画字与预乘 over（`out = src·(1−a) + premul`，在封面的 float 平面上、量化前）；**不重画画面**，封面仍是“导出的那一帧 + 字”，可逐字节对照。字体默认 PingFang SC，**用于发布的许可仍待主人确认**（见“许可与素材”），确认前封面标题只做本机预览与测试，不作为发布用途的默认功能交付。
-  - **版式规则（④）待实测后定**：模板 2–3 种（底部大字、左上标题 + 副标题、居中描边字）；避让人脸框；平台安全区按小红书 / B 站官方说明核实后再定；字号、描边、阴影沿用字幕的做法按画幅缩放。
+  - **排版**：本机 CoreText 模板贴字，与字幕烧录同一套画字与预乘 over（`out = src·(1−a) + premul`，在封面的 float 平面上、量化前）；**不重画画面**，封面仍是“导出的那一帧 + 字”，可逐字节对照。字体为思源黑体 CN Bold（SIL OFL 1.1，主人 2026-11-04 选定），用它画出的封面与字幕可用于发布、无需署名。
+  - **版式（④，`Core/CoverTitle.swift`，Claude 2026-11-04 定，实测后在此更新）**：主人输入一行标题，可选一行副标题（在标题下方，字号为标题的 0.5）。三种模板，每种按顺序给出候选位置：
+    - `bottom` 底部大字：标题字号 = 封面短边 × 8.5%，水平居中；候选 ① 底边距下沿 6% ② 顶边距上沿 6%。
+    - `corner` 左上标题 + 副标题：字号 = 短边 × 7%，左对齐；候选 ① 左上 ② 左下（距两边各 6%）。
+    - `center` 居中描边大字：字号 = 短边 × 11%，水平居中；候选 ① 垂直居中 ② 中心在高度 25% ③ 中心在高度 75%。
+    - 画字与字幕同一套：CoreText，白字、黑描边为字号 8%、轻阴影，先画描边再画字（`SubtitleRenderer` 的两遍画法，抽成共用函数，字幕位图逐字节不变）；字体同字幕（思源黑体 CN Bold）。任一行宽超过封面宽 85% 时整体等比缩小。
+    - **避让人脸**（纯函数 `CoverTitle.place`）：只避让该帧的人脸样本（`source == .face`；人体与显著性框太大，避不开）。人脸框（来源归一坐标）换算到封面像素：先减裁切原点、再乘“成片 / 裁切长度”，四边各外扩封面短边的 4%。按模板顺序取第一个与外扩人脸框不相交的候选；都相交时取相交面积最小的（同面积取靠前的），并在 CLI / App 里提示“标题压到了人脸”。
+    - 合成：标题位图是 sRGB 预乘 RGBA，在封面的 float 平面上、量化前用字幕的同一个 over 内核（`encodeOverlay`）贴上，经 `encodeGradeFrame` 的 overlay 参数，不新增 GPU 内核；标题之外的像素与不加标题时逐字节相同。写完自检照旧（读回与写入前的像素比）。
+    - 边距 6% 是占位：小红书 / B 站封面的界面遮挡区按官方说明核实后再改（见“待定”）。
+    - CLI：`--cover-title 文字`、`--cover-subtitle 文字`、`--cover-template bottom|corner|center`（默认 `bottom`），对所有封面生效。App：封面页加“标题”“副标题”输入框与模板选择，预览随之更新，压到人脸时在预览下方提示。
+    - 2026-11-04 实测（gym 两张封面 × 3:4 / 16:9 × 三种模板，拼图 `out/cover/title/sheet.jpg`）：人脸特写的 3:4 底部模板落在深色衣服上、不压脸；左上模板因人脸占左上自动换到左下；居中模板三个位置都碰到脸，取压得最少的下三分之一并提示。**局限**：骑马远景里人脸太小，Vision 没检出，人体框又不避让，底部标题离骑手很近。
+    - 字幕画字抽成共用函数（`SubtitleRenderer.draw`）前后，4 种字幕位图的 SHA-256 完全相同；变异检查 4 处（去掉人脸外扩、只取第一个位置、避让人体框、封面不贴标题）都被 `CoverTitleTests` 抓到。
+    - 每改一次标题文字，预览就重新渲染一次（过时的结果丢弃）；开降噪的长镜头上可能有延迟，界面验收时观察。
+    - **界面验收第三轮**（2026-11-04，Air，Terra，主人当场批准；报告 `out/ui/air_covers3_report.md`）：**未通过**。新控件（标题、副标题、版式）中英文名称正确、可切换、无截断，导出 6 个文件流程正常；但用辅助功能 `set value` 写入标题后，输入框显示了文字，预览与导出文件里都**没有标题**（Air 导出的 3:4 与不加标题的 CLI 封面只差 11–21 个像素 1 级，与加标题的差 10 万以上像素），压脸提示也从未出现。
+    - 判定（同日 `AppTests/CoverTitleAppTests`）：直接设 `Project.coverTitleText` 后预览重画（44,537 个像素变化）、换版式移位、清空复原；`Engine` 导出的文件与带标题的预览逐像素相同。两处变异（去掉 `didSet` 刷新、导出丢标题）都被抓到。所以 App 的状态到像素这条路是对的，**问题在辅助功能 `set value` 没有传进 SwiftUI `TextField` 的绑定**（框里显示了字，绑定的变量仍为空）。界面实操验收因此验证不了文字输入；按规则不能发键盘事件，标题输入框需主人亲手用键盘试一次。
+    - **主人亲手验证（2026-11-04）**：用键盘在标题框输入，预览正常显示标题，切换版式正常。封面标题的界面验收以此为准。
   - **实测计划（Pro，`out/cover/fm/`，探针脚本不进产品代码）**：可用性与原因；首次与后续响应耗时（附负载）；5 组输入（篮球馆训练口播、草原骑马口播、调色教程口播、只有主题词“伊斯坦布尔日落”、英文口播要中文标题）各出 5 个候选；量：长度合规率、语言合规、编造率（出现输入里没有的专名或事实，人工逐条判）、贪心采样两次是否一致、有无拒答；画面标签有 / 无各跑一遍对比编造率。结果记在本节。
   - **实测结果（2026-11-04）：两台机器都用不了**。`SystemLanguageModel.default.availability` 在 Pro（M4 Max，Mac16,5，macOS 26.6.2，地区 zh_CN）与 Air（M3，Mac15,13，macOS 26.3.1，地区 zh_Hans_GB）上都是 `.unavailable(.deviceNotEligible)`，探针在第一步停下，没有生成任何标题。两颗芯片都支持 Apple 智能；查到的资料没有解释 M 系列为何返回这个原因（一篇第三方教程说地区限制应报 `.appleIntelligenceNotEnabled`）。**原因已查到**（同日重跑仍不可用后，只读 `/private/var/db/eligibilityd/eligibility.plist` 的 `OS_ELIGIBILITY_DOMAIN_GREYMATTER`）：总判定 `answer_t = 2`；Pro 上只有 `OS_ELIGIBILITY_INPUT_DEVICE_REGION_CODE = 2`，其余各项（账单国家、所在地、设备类别、设备语言、Siri 语言及二者匹配、生成模型系统等）都是 3；Air 上设备地区码与账单国家都是 2。按这个记录，2 是不通过：设备地区码是硬件的销售地区，系统设置改不了，**这两台 Mac 都用不了 Foundation Models**。② 需主人改选（备选：只手动输入；本机 Ollama 作开发者功能；云端属红线）。探针 `out/cover/fm/probe.swift` 可在支持的机器上直接重跑。
 - **待定（需主人决定或实测）**：
@@ -182,8 +225,9 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `App/` | SwiftUI 应用 target `AutoGrade` | 子目录：`Model/`（唯一的 `@Observable @MainActor` 状态）、`Service/`（actor，独占引擎）、`Canvas/`、`Panels/`、`Windows/`、`Localization/` |
 | `App/Localization/Strings.swift` | 全部界面文案（English / 简体中文） | 界面里不得出现裸字符串；语言运行时切换，不重启。不复制 SpektraLab 代码（GPL-3.0，本项目许可未定） |
 | `Tests/` | XCTest（Core） | 对照测试 + 端到端测试 |
-| `AppTests/` | XCTest（App 的可测部分） | 目前是语言逻辑；测试自带 UserDefaults suite，不读真实设置 |
+| `AppTests/` | XCTest（App 的可测部分） | 直接编译 `App/Localization`、`App/Model`、`App/Service`（不含视图）并链接 Core：语言逻辑，以及封面标题从 `Project` 到预览、导出像素的整条路径；测试自带 UserDefaults suite，不读真实设置；`Project` / `Engine` 用 `stylesDirectory: nil`，只有 FiveK |
 | `Resources/Models/` | 转好的 `.mlpackage`、上游 LICENSE | 只能由 `research/convert_coreml.py` 生成 |
+| `Resources/Fonts/` | 字幕与封面标题的字体：`SourceHanSansCN-Bold.otf`（思源黑体 2.005R，中国大陆字符子集，Bold；Adobe，**SIL OFL 1.1**，主人 2026-11-04 决定） | 只从官方 `github.com/adobe-fonts/source-han-sans` 的 `release` 分支 `SubsetOTF/CN/` 下载，固定提交 `a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2`，下载后核对 git blob sha 与官方一致；原样使用、不改不裁（改了就不能再叫 “Source”）；许可原文在 `licenses/SourceHanSans-LICENSE.txt`。只放这一个字重（8.6 MB，仓库里唯一的大二进制文件，fixtures 的大小上限不适用于它）。运行时只在本进程注册（`CTFontManagerRegisterFontsForURL` + `.process`），**不装进系统字体** |
 | `research/` | Python：独立 `.venv`、转换、对照、训练 | 唯一允许 Python 的地方；运行一律 `python -I` |
 | `research/third_party/` | 上游 AdaInt，固定 commit `5678851339dff90becb09c3dec41e7214207ccbc` | `research/fetch_upstream.sh` 拉取；不进 git，只读，视为不可信代码 |
 | `research/third_party/rawtherapee-film/` | RawTherapee Film Simulation Collection（2015-09-20，HaldCLUT PNG；Pat David、Pavlov Dmitry、Michael Ezra，**CC BY-SA 4.0**） | 从官方 `rawtherapee.com/shared/HaldCLUT.zip` 下载；不进 git，只读。用它生成的训练数据和权重要按 CC BY-SA 4.0 署名并相同方式共享，与 FiveK 的仅限研究同时成立（2026-11-02 主人知情后决定使用） |
@@ -195,7 +239,7 @@ macOS 原生 AI 视频自动调色。本文件是**规则的唯一来源**；`AG
 | `fixtures/` | 小体积黄金数据（每个文件 < 2 MB，合计 < 20 MB） | 只能由 `research/make_fixtures.py` 生成；进 git |
 | `Tools/` | 构建脚本；`install-style.sh` 把 `research/runs/<run>/` 的风格模型编译后装进本机风格目录 | |
 | `~/Library/Application Support/AutoGrade/Styles/`（仓库外） | 本机安装的风格模型 `<id>.mlmodelc`，旁边的 `<id>.reference/` 存放 PyTorch 对照数据 | 只能由 `Tools/install-style.sh` 写入；文件名就是风格 id，`fivek` 保留给内置模型；显示名和许可写在模型元数据里（`convert_coreml.py --name-en/--name-zh`）。App 和 CLI 只读、不写；目录不存在时只有 FiveK |
-| `licenses/` | 第三方许可原文（FiveK 两份）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
+| `licenses/` | 第三方许可原文（FiveK 两份、思源黑体 OFL）与对照说明 | 随仓库分发；新增第三方素材或权重时同步更新 |
 | `docs/images/` | README 用的真实截图 | 只截 App 窗口，不含桌面或其他应用；写明来源（如界面验收的哪一张）；JPEG ≤ 300 KB |
 | `README.md` / `README_EN.md` | 中文主 README 与英文版 | 两份顶部互链并带同一 `README_SYNC` 标记；改一份必须同步另一份，改完跑 qiangshou 的 `validate_readme_pair.py` |
 | `out/` | 一切生成物（视频、LUT、日志、测速） | 不进 git，可随时整个清空 |
@@ -289,6 +333,7 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - 任何一步前先确认前台进程是目标应用；不是就停下并报告，不重试。
 - 脚本一次只做一个动作，不批量串联回车等确认类按键。
 - 发现输入落到别的应用：立即停止，如实报告，不去撤回或补救那个应用里的内容。
+- SwiftUI 的 `TextField` 用辅助功能 `set value` 写入时，框里显示了文字，但绑定的变量不变（2026-11-04 Air 第三轮，见“封面 / 版式”）；文字输入在实操验收里验证不了，由 `AppTests` 覆盖状态到像素，键盘输入由主人亲手试。
 - SwiftUI 的 `Slider` 不接受辅助功能 `set value`（2026-11-04 Air：两次设值都无效），只响应 `AXIncrement` / `AXDecrement`；界面实操调滑块一律用这两个动作。预览里的鼠标拖动按规则不能合成，所以镜头行另有“裁切位置”滑块，与拖动调用同一个 `setCropCenter`。
 - 待查：时间轴窄宽度下的两个图标按钮（剪刀 / 合并）已加 `accessibilityLabel`，但 2026-11-04 实操读到的 description 只是通用的 “button”，悬停提示正常；封面预览图（`Image` + `accessibilityLabel`）同样只读到 “image”。是读错了属性还是 SwiftUI 没有暴露名称，未确认；下次在 Air 上同时读 `AXDescription`、`AXLabel`、`AXHelp` 三个属性再定。
 - **菜单栏菜单开着时不要再 `activate`**（2026-11-04 Air）：AutoGrade 菜单展开后 App 停在菜单的事件循环里，之后的 `tell application "AutoGrade" to activate` 不返回（卡住）。选菜单项要在同一个脚本里展开并点击；展开后要关掉，对菜单做 `perform action "AXCancel" of menu 1 of menu bar item … of menu bar 1`（System Events，实测可关）。每条 ssh 命令都加超时（Air 上没有 `timeout`，在 Pro 侧后台运行并定时 `kill`）。
@@ -312,7 +357,10 @@ PATH="$PWD/research/.venv/bin:$PATH" research/.venv/bin/python -I research/make_
 - MIT-Adobe FiveK 两份许可（2026-11-02 从官网 `legal/` 核实，原文在 `licenses/`）：**只能为自己的研究使用，不得以商业利益或报酬为目的**；分发图片副本须附版权声明和许可全文；不得用 Adobe/MIT 名义背书。许可只讲图片，没讲训练出的权重；本项目**按"仅限研究、不得商用"对待权重**。
 - `fixtures/demo_*` 来自 FiveK 图片 `a4739`（属 `LicenseAdobeMIT`），所以 `licenses/FiveK-LicenseAdobeMIT.txt` 必须随仓库一起分发。
 - 远程仓库 `github.com/Shaojie66/AutoGrade`：2026-11-02 主人决定**公开**（在核实 FiveK 许可之后）。公开只为研究、非商用；任何商用、或把权重/FiveK 内容用于收费产品前先问主人。
-- **字幕字体**（2026-11-04 核实，待主人确认）：默认 PingFang SC，随 macOS 附带。macOS 软件许可协议第 E 条：可用随附字体“在运行 Apple 软件时显示和打印内容”，把字体嵌入内容则须符合该字体的嵌入限制；PingFang SC 的 OS/2 `fsType` 为 0x0004（预览与打印嵌入）。烧录是把文字画成视频像素，不在成片里嵌入任何字体数据，按“显示/打印内容”理解属于允许范围；这是本项目的理解，不是法律意见，涉及商用发布前由主人确认。外挂 SRT 不含字体。
+- **字幕与封面标题字体：思源黑体 / Source Han Sans CN Bold，SIL OFL 1.1**（主人 2026-11-04 决定，字幕一起换）。OFL 允许随软件分发与商用，用字体做出的图片、视频不受 OFL 约束、无需署名；分发时附版权声明与许可全文（`licenses/SourceHanSans-LICENSE.txt`），不单独出售字体，改动后不得使用保留名 “Source”。决定前的两条路记录如下：
+  - 继续用 PingFang SC：理由与边界同下面“字幕字体”一条（画成像素、不嵌入字体数据，按 macOS 软件许可协议第 E 条“显示和打印内容”理解）；这是本项目的理解，不是法律意见。
+  - 改用**思源黑体 / Source Han Sans SC**（Adobe，SIL Open Font License 1.1）：许可明文允许商用，并写明用字体做出的文档（图片、视频）不受 OFL 约束、无需署名；随软件分发要附版权声明与许可全文，改名不得含保留名 “Source”。体积：官方 2.005R 发布里 SC 七个字重的压缩包 95 MB（单个字重约 13 MB），中国大陆字符子集（CN）50 MB（单个约 7 MB）。要进仓库就是第一个大的二进制文件，需另定放法（进 git / 构建时下载 / 只用本机已装的）。下载与引入新的第三方素材前先问主人。
+- **原字幕字体 PingFang SC 的分析**（2026-11-04 核实；已不再使用，留作记录）：默认 PingFang SC，随 macOS 附带。macOS 软件许可协议第 E 条：可用随附字体“在运行 Apple 软件时显示和打印内容”，把字体嵌入内容则须符合该字体的嵌入限制；PingFang SC 的 OS/2 `fsType` 为 0x0004（预览与打印嵌入）。烧录是把文字画成视频像素，不在成片里嵌入任何字体数据，按“显示/打印内容”理解属于允许范围；这是本项目的理解，不是法律意见，涉及商用发布前由主人确认。外挂 SRT 不含字体。
 - 测试视频是即梦生成内容，整段视频不进 git，只把抽出的少量帧缩小后放进 `fixtures/`。
 
 ## 红线（必须先问主人）

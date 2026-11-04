@@ -31,6 +31,9 @@ struct CoverPreview: View {
             if let image = project.coverPreview {
                 Text(L(S.coverPreviewSize(Int(image.size.width), Int(image.size.height))))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                if project.coverTitleOverlapsFace {
+                    Text(L(S.titleOverlapsFace)).font(.caption).foregroundStyle(.orange)
+                }
             }
         }
         .padding(12)

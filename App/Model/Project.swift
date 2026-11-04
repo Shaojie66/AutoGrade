@@ -77,6 +77,25 @@ final class Project {
         didSet { refreshCoverPreview() }
     }
     private(set) var coverPreview: NSImage?
+    private(set) var coverTitleOverlapsFace = false
+    /// The owner's title on every cover (CLAUDE.md 封面 / 版式); empty = none.
+    var coverTitleText = "" { didSet { if coverTitleText != oldValue { refreshCoverPreview() } } }
+    var coverSubtitleText = "" { didSet { if coverSubtitleText != oldValue { refreshCoverPreview() } } }
+    var coverTemplate: CoverTitleTemplate = .bottom { didSet { if coverTemplate != oldValue { refreshCoverPreview() } } }
+    // title candidates (CLAUDE.md 封面 / 云端候选 / App): off unless turned on in Settings
+    let titleSettings: TitleSuggestionSettings
+    private let titleTransport: TitleTransport
+    /// A description sent with the subtitles to get candidates; not drawn on the cover.
+    var coverTopicText = ""
+    private(set) var titleCandidates: [String] = []
+    private(set) var offeredTitles: [String] = []
+    private(set) var suggestingTitles = false
+    private(set) var titleSuggestionError: String?
+
+    private var coverTitle: CoverTitle? {
+        let t = CoverTitle(title: coverTitleText, subtitle: coverSubtitleText.isEmpty ? nil : coverSubtitleText, template: coverTemplate)
+        return t.isEmpty ? nil : t
+    }
     private(set) var coverThumbnails: [Int: NSImage] = [:]   // by frame
 
     private let engine: Engine?
@@ -84,10 +103,15 @@ final class Project {
     private var pendingFrame: Int?
     private var playTask: Task<Void, Never>?
 
-    init() {
+    /// `stylesDirectory` nil: FiveK only (AppTests); the app uses the default. `titleSettings`
+    /// and `titleTransport` are injectable so AppTests never touch the Keychain or the network.
+    init(stylesDirectory: URL? = StyleCatalog.defaultDirectory, titleSettings: TitleSuggestionSettings = .shared,
+         titleTransport: TitleTransport = URLSessionTitleTransport()) {
+        self.titleSettings = titleSettings
+        self.titleTransport = titleTransport
         var missing: String?
         do {
-            let engine = try Engine()
+            let engine = try Engine(stylesDirectory: stylesDirectory)
             self.engine = engine
             availableStyles = engine.styles
             let stored = UserDefaults.standard.string(forKey: Self.defaultStyleKey) ?? StyleCatalog.builtinID
@@ -130,6 +154,10 @@ final class Project {
         styles = []
         thumbnails = [:]
         coverChosen = []
+        coverTopicText = ""
+        titleCandidates = []
+        offeredTitles = []
+        titleSuggestionError = nil
         selectedCover = nil
         coverPreview = nil
         coverThumbnails = [:]
@@ -387,13 +415,59 @@ final class Project {
             coverPreview = nil
             return
         }
-        let aspect = coverPreviewAspect
+        let aspect = coverPreviewAspect, title = coverTitle
         Task {
-            guard let image = try? await engine.coverPreview(c, aspect: aspect),
-                  selectedCover == f, coverPreviewAspect == aspect else { return }
+            guard let (image, overlaps) = try? await engine.coverPreview(c, aspect: aspect, title: title),
+                  selectedCover == f, coverPreviewAspect == aspect, coverTitle == title else { return }
             coverPreview = NSImage(cgImage: image.value, size: NSSize(width: image.value.width, height: image.value.height))
+            coverTitleOverlapsFace = overlaps
         }
     }
+
+    var canSuggestTitles: Bool {
+        titleSettings.enabled && titleSettings.hasKey && summary != nil && !suggestingTitles
+    }
+
+    /// What a request would send: the description and the subtitles (cut to the limit), in characters.
+    var titleSendCounts: (topic: Int, subtitles: Int) {
+        let topic = coverTopicText.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let subs = subtitles.map { $0.lines.joined(separator: " ") }.filter { !$0.isEmpty }.joined(separator: "\n").count
+        return (topic, min(subs, TitleSuggester.transcriptLimit))
+    }
+
+    /// Only a description, no subtitles: the candidates come out close to each other.
+    var titleInputIsThin: Bool { subtitles.isEmpty }
+
+    /// Ask DeepSeek for candidates. `anotherBatch` sends the ones already offered,
+    /// asking for new ones. Nothing is sent when it is off or no key is saved.
+    func suggestTitles(anotherBatch: Bool = false) {
+        guard let engine, titleSettings.enabled, !suggestingTitles else { return }
+        guard let key = titleSettings.keyForRequest() else {
+            titleSuggestionError = L(S.titleNeedsKey)
+            return
+        }
+        let shapes = CoverAspect.allCases.filter(coverAspects.contains)
+        let aspects = shapes.isEmpty ? Cover.defaultAspects : shapes
+        let exclude = anotherBatch ? offeredTitles : [], topic = coverTopicText, transport = titleTransport
+        suggestingTitles = true
+        titleSuggestionError = nil
+        Task {
+            defer { suggestingTitles = false }
+            guard let request = await engine.titleRequest(topic: topic, aspects: aspects, exclude: exclude) else { return }
+            do {
+                let titles = try await TitleSuggester.suggest(request, key: key, transport: transport)
+                titleCandidates = titles
+                offeredTitles = (anotherBatch ? offeredTitles : []) + titles
+            } catch let e as TitleSuggestionError {
+                titleSuggestionError = L(S.titleError(e))
+            } catch {
+                titleSuggestionError = L(S.titleError(.network("\(type(of: error))")))
+            }
+        }
+    }
+
+    /// Put a candidate in the title field; the owner can still edit it.
+    func useTitleCandidate(_ title: String) { coverTitleText = title }
 
     /// The ticked covers in rank order, numbered by their rank in the list.
     private var chosenCovers: [(rank: Int, candidate: Cover.Candidate)] {
@@ -414,7 +488,7 @@ final class Project {
         folder.prompt = L(S.exportCoversButton)
         folder.directoryURL = source.deletingLastPathComponent()
         guard folder.runModal() == .OK, let dir = folder.url else { return }
-        let chosen = chosenCovers, format = coverFormat
+        let chosen = chosenCovers, format = coverFormat, title = coverTitle
         let aspects = CoverAspect.allCases.filter(coverAspects.contains)
         let names = Engine.coverNames(source: source, covers: chosen, aspects: aspects, format: format)
         let existing = names.filter { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
@@ -430,7 +504,7 @@ final class Project {
         busyProgress = 0
         Task {
             do {
-                let checks = try await engine.exportCovers(chosen, aspects: aspects, format: format, to: dir) { p in
+                let checks = try await engine.exportCovers(chosen, aspects: aspects, format: format, title: title, to: dir) { p in
                     Task { @MainActor in self.busyProgress = p }
                 }
                 let failed = checks.filter { !$0.passed }

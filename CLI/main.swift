@@ -7,7 +7,9 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
                  [--subtitles srt|burn|both] [--subtitle-lang zh-CN] [--subtitle-file in.srt]
                  [--denoise 0.5] [--background blur|white|black|green|#RRGGBB] [--background-strength 0.6]
                  [--covers DIR] [--cover-aspects 3:4,16:9] [--cover-count 3] [--cover-format png|jpeg] [--cover-overwrite]
+                 [--cover-title TEXT] [--cover-subtitle TEXT] [--cover-template bottom|corner|center]
        autograde <input> --covers DIR [...]          covers only, no video
+       autograde <input> --cover-suggest-titles [--cover-topic TEXT] [--subtitle-file in.srt] [--cover-exclude "a;b"]
        autograde --list-styles
        autograde --list-languages
        autograde --download-speech-model zh-CN
@@ -33,6 +35,12 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
                --cover-count (default 3), graded like the video, in each of --cover-aspects
                (3:4 1080x1440, 4:3 1440x1080, 16:9 1920x1080, orig; default 3:4,16:9); PNG unless
                --cover-format jpeg. Existing files are an error unless --cover-overwrite.
+  --cover-title TEXT  draw this title on every cover (white, black outline), kept clear of the face when it can be;
+               --cover-subtitle adds a smaller second line; --cover-template bottom (default), corner or center
+  --cover-suggest-titles  print 5 title candidates from DeepSeek and exit (nothing is analysed or written).
+               Sends text only: --cover-topic and the subtitles (--subtitle-file, else <input>.srt beside the video,
+               first 2000 characters). Needs DEEPSEEK_API_KEY in the environment. --cover-exclude lists titles
+               already offered, for another batch. Pick one and run again with --cover-title.
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709, limited or full range. After writing, the output is checked
@@ -56,6 +64,13 @@ struct Options {
     var subtitleFile: URL?
     var enhance = EnhanceSettings()
     var covers: CoverOptions?
+    var suggest: SuggestOptions?
+}
+
+struct SuggestOptions {
+    var topic: String?
+    var exclude: [String] = []
+    var aspects: [CoverAspect]      // the covers the title is for: sets the length limit
 }
 
 struct CoverOptions {
@@ -64,6 +79,7 @@ struct CoverOptions {
     var count = Cover.defaultCount
     var format = CoverFormat.png
     var overwrite = false
+    var title: CoverTitle?
 }
 
 func fail(_ message: String) -> Never {
@@ -86,6 +102,8 @@ func parse(_ args: [String]) -> Options {
     var denoise: Float?, background: String?, backgroundStrength = BackgroundEffect.defaultBlurStrength
     var coverDir: URL?, coverAspects = Cover.defaultAspects, coverCount = Cover.defaultCount, coverFormat = CoverFormat.png
     var coverOverwrite = false
+    var coverTitle: String?, coverSubtitle: String?, coverTemplate = CoverTitleTemplate.bottom
+    var suggestTitles = false, coverTopic: String?, coverExclude: [String] = []
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -128,6 +146,14 @@ func parse(_ args: [String]) -> Options {
             guard coverCount >= 1 else { fail("--cover-count must be at least 1") }
         case "--cover-format": coverFormat = convert(value(arg), CoverFormat.init(rawValue:), "--cover-format is png or jpeg")
         case "--cover-overwrite": coverOverwrite = true
+        case "--cover-suggest-titles": suggestTitles = true
+        case "--cover-topic": coverTopic = value(arg)
+        case "--cover-exclude":
+            coverExclude = value(arg).split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        case "--cover-title": coverTitle = value(arg)
+        case "--cover-subtitle": coverSubtitle = value(arg)
+        case "--cover-template":
+            coverTemplate = convert(value(arg), CoverTitleTemplate.init(rawValue:), "--cover-template is bottom, corner or center")
         case "--list-languages": listLanguages(); exit(0)
         case "--download-speech-model": downloadModel(value(arg)); exit(0)
         case "--list-styles": listStyles(); exit(0)
@@ -137,8 +163,12 @@ func parse(_ args: [String]) -> Options {
             input = URL(fileURLWithPath: arg)
         }
     }
-    guard let input, output != nil || coverDir != nil else { fail(usage) }
+    guard let input, output != nil || coverDir != nil || suggestTitles else { fail(usage) }
+    if suggestTitles && output != nil { fail("--cover-suggest-titles only prints candidates; pick one, then run again with --cover-title") }
+    if !suggestTitles && (coverTopic != nil || !coverExclude.isEmpty) { fail("--cover-topic and --cover-exclude go with --cover-suggest-titles") }
     if output == nil && subtitles != nil { fail("--subtitles needs -o (covers have no subtitles)") }
+    if coverDir == nil && !suggestTitles && (coverTitle != nil || coverSubtitle != nil) { fail("--cover-title needs --covers") }
+    if coverSubtitle != nil && coverTitle == nil { fail("--cover-subtitle needs --cover-title") }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
     if denoise != nil && !EnhanceSettings.denoiseAvailable { fail("--denoise needs macOS 26 or later") }
     let effect: BackgroundEffect? = background.map {
@@ -151,7 +181,9 @@ func parse(_ args: [String]) -> Options {
                    reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile,
                    enhance: EnhanceSettings(denoise: denoise, background: effect),
                    covers: coverDir.map { CoverOptions(directory: $0, aspects: coverAspects, count: coverCount, format: coverFormat,
-                                                       overwrite: coverOverwrite) })
+                                                       overwrite: coverOverwrite,
+                                                       title: coverTitle.map { CoverTitle(title: $0, subtitle: coverSubtitle, template: coverTemplate) }) },
+                   suggest: suggestTitles ? SuggestOptions(topic: coverTopic, exclude: coverExclude, aspects: coverAspects) : nil)
 }
 
 func listLanguages() {
@@ -196,6 +228,55 @@ func listStyles() {
 func ms(_ seconds: Double, _ frames: Int) -> String { String(format: "%6.2f ms/frame", seconds * 1000 / Double(max(frames, 1))) }
 
 let options = parse(Array(CommandLine.arguments.dropFirst()))
+
+/// --cover-suggest-titles (CLAUDE.md 封面 / 云端候选): text only, the key from the environment only.
+func suggestTitles(_ o: Options, _ s: SuggestOptions) async {
+    guard let key = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"], !key.isEmpty else {
+        fail("--cover-suggest-titles needs DEEPSEEK_API_KEY in the environment; nothing was sent")
+    }
+    let srt = o.subtitleFile ?? o.input.deletingPathExtension().appendingPathExtension("srt")
+    var cues: [SubtitleCue] = []
+    if FileManager.default.fileExists(atPath: srt.path) {
+        do {
+            let parsed = Subtitles.parseSRT(try String(contentsOf: srt, encoding: .utf8))
+            for w in parsed.warnings { print("warning: \(srt.lastPathComponent): \(w)") }
+            cues = parsed.cues
+        } catch {
+            fail("could not read \(srt.path): \(error)")
+        }
+    } else if o.subtitleFile != nil {
+        fail("\(srt.path) does not exist")
+    }
+    let size: (Int, Int)
+    do {
+        let info = try VideoReader(url: o.input, device: try MetalContext().device).info
+        size = (info.width, info.height)
+    } catch {
+        fail("\(error)")
+    }
+    let request = TitleRequest(topic: s.topic, cues: cues, aspects: s.aspects, sourceWidth: size.0, sourceHeight: size.1, exclude: s.exclude)
+    if request.isEmpty { fail("nothing to base titles on: give --cover-topic, or subtitles (--subtitle-file or \(srt.lastPathComponent))") }
+    let subtitleChars = request.transcript?.count ?? 0
+    print("suggest: sending to DeepSeek (\(TitleSuggester.model)) text only — topic \(request.topic?.count ?? 0) chars, "
+          + "subtitles \(min(subtitleChars, TitleSuggester.transcriptLimit)) of \(subtitleChars) chars"
+          + (cues.isEmpty ? "" : " from \(srt.lastPathComponent)") + (s.exclude.isEmpty ? "" : ", \(s.exclude.count) already offered")
+          + "; up to \(request.limit) characters each")
+    if request.isThin { print("note: only a topic — the candidates will be close to each other; subtitles or a longer description help") }
+    let start = Date()
+    do {
+        let titles = try await TitleSuggester.suggest(request, key: key)
+        print(String(format: "suggest: %d candidates in %.2f s (check the facts before using one):", titles.count, Date().timeIntervalSince(start)))
+        for (i, t) in titles.enumerated() { print("  \(i + 1). \(t)") }
+        print("pick one: --covers DIR --cover-title \"<title>\"; another batch: add --cover-exclude \"\(titles.joined(separator: ";"))\"")
+    } catch {
+        fail("\(error)")
+    }
+}
+
+if let s = options.suggest {
+    await suggestTitles(options, s)
+    exit(0)
+}
 do {
     let engine = try AutoGrader()
     print("autograde \(AutoGrade.version) — \(engine.metal.device.name)")
@@ -355,7 +436,13 @@ do {
             targets[item.aspect] = t
             let centre = Cover.center(frame: pick.frame, track: track, shot: shot)
             let (w, h) = item.aspect.outputSize(sourceWidth: info.width, sourceHeight: info.height)
-            let bgra = try engine.renderCover(frame, lut: analysis.luts[pick.shot], aspect: item.aspect, center: centre, into: t)
+            let title = try c.title.flatMap {
+                try engine.coverTitleOverlay($0, aspect: item.aspect, sourceWidth: info.width, sourceHeight: info.height,
+                                             center: centre, face: track.samples[pick.frame])
+            }
+            if title?.overlapsFace == true { print("warning: cover \(item.rank) \(item.aspect.rawValue): the title overlaps the face") }
+            let bgra = try engine.renderCover(frame, lut: analysis.luts[pick.shot], aspect: item.aspect, center: centre, into: t,
+                                              title: title?.overlay)
             let check = try CoverWriter.write(bgra: bgra, width: w, height: h, to: item.url, format: c.format, overwrite: c.overwrite)
             print(String(format: "cover %d: shot %02d frame %d (pick %.3f, rank %.3f, centre %.2f,%.2f) %@ %dx%d -> %@ — %@",
                          item.rank, pick.shot, pick.frame, pick.pick, pick.rank, centre.x, centre.y, item.aspect.rawValue, w, h,
