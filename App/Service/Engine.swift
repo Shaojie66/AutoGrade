@@ -538,18 +538,20 @@ actor Engine {
             stream = try core.frameStream(source, analysis: a, from: index, enhancer: enhancer)
         } catch { return }
         let clock = ContinuousClock()
-        let start = clock.now
-        let origin = a.frameTimes[index]
+        let t0 = clock.now
+        var schedule = PlaybackClock()
         let slack = Duration.seconds(max(a.info.duration.seconds, 1e-3) / Double(a.frameCount))   // one frame
         var dropped = 0, shown = 0
         var window: [ContinuousClock.Instant] = []
         while !Task.isCancelled {
             guard let decoded = try? stream.next() else { break }
-            let due = start + .seconds((decoded.frame.presentationTime - origin).seconds)
-            if clock.now > due + slack {
+            let now = (clock.now - t0) / .seconds(1)
+            guard let at = schedule.schedule(pts: decoded.frame.presentationTime.seconds, now: now,
+                                             slack: slack / .seconds(1)) else {
                 dropped += 1
                 continue
             }
+            let due = t0 + .seconds(at)
             try? await Task.sleep(until: due, clock: clock)
             if Task.isCancelled { break }
             guard let frame = try? present(decoded, analysis: analysis ?? a, output: output) else { break }
