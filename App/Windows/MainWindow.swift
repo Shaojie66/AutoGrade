@@ -49,6 +49,13 @@ struct MainWindow: View {
                     }
                     .disabled(!project.canEdit)
                     .accessibilityLabel(L(S.aspect))
+                    Menu {
+                        enhanceMenu
+                    } label: {
+                        Label(L(S.enhanceMenu), systemImage: "wand.and.stars")
+                    }
+                    .disabled(!project.canEdit)
+                    .accessibilityLabel(L(S.enhanceMenu))
                     if project.availableStyles.count > 1 {
                         Menu {
                             Section(L(S.applyToAllShots)) {
@@ -79,6 +86,39 @@ struct MainWindow: View {
             .alert(item: $project.alert) { a in
                 Alert(title: Text(L(a.title)), message: Text(a.message), dismissButton: .default(Text(L(S.ok))))
             }
+    }
+
+    /// Noise reduction and background presets (CLAUDE.md 画质增强).
+    @ViewBuilder private var enhanceMenu: some View {
+        Section(L(S.denoise)) {
+            if EnhanceSettings.denoiseAvailable {
+                Picker(L(S.denoise), selection: Binding(get: { project.enhance.denoise }, set: { project.setDenoise($0) })) {
+                    Text(L(S.off)).tag(Float?.none)
+                    Text(L(S.denoiseStandard)).tag(Float?.some(EnhanceSettings.defaultDenoise))
+                    Text(L(S.denoiseStrong)).tag(Float?.some(1))
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                if project.enhance.denoise != nil { Text(L(S.denoisePreviewNote)) }
+            } else {
+                Text(L(S.denoiseNeedsMac26))
+            }
+        }
+        Section(L(S.background)) {
+            Picker(L(S.background), selection: Binding(get: { project.enhance.background }, set: { project.setBackground($0) })) {
+                Text(L(S.backgroundNone)).tag(BackgroundEffect?.none)
+                Text(L(S.blurLight)).tag(BackgroundEffect?.some(.blur(strength: 0.3)))
+                Text(L(S.blurStandard)).tag(BackgroundEffect?.some(.blur(strength: BackgroundEffect.defaultBlurStrength)))
+                Text(L(S.blurStrong)).tag(BackgroundEffect?.some(.blur(strength: 1)))
+                Text(L(S.backgroundWhite)).tag(BackgroundEffect?.some(.white))
+                Text(L(S.backgroundBlack)).tag(BackgroundEffect?.some(.black))
+                Text(L(S.backgroundGreen)).tag(BackgroundEffect?.some(.green))
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Text(L(S.backgroundPeopleOnly))
+            if !project.shotsWithoutPeople.isEmpty { Text(L(S.noPeopleInShots(project.shotsWithoutPeople))) }
+        }
     }
 
     /// Mandarin first (the default, CLAUDE.md 字幕), then the rest as the system lists them.

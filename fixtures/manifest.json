@@ -103,6 +103,28 @@
       ]
     }
   ],
+  "background_cases": [
+    {
+      "name": "bg_blur",
+      "effect": "blur",
+      "sigma": 4.5,
+      "colour": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "bg_colour",
+      "effect": "colour",
+      "sigma": 0,
+      "colour": [
+        0.0,
+        0.6941176470588235,
+        0.25098039215686274
+      ]
+    }
+  ],
   "upstream": "AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
   "torch": "2.15.0",
   "cut_threshold": 0.25,
@@ -174,6 +196,79 @@
     1.933333
   ],
   "files": {
+    "bg_blur": {
+      "file": "bg_blur.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        90,
+        160
+      ],
+      "note": "bg_image with bg_mask, ('blur', 4.5)",
+      "sha256": "eecaef062e8d4867ad00a2ab889a2935a4920ca85f6141a3a4144eb5c6cf7c71",
+      "bytes": 172800
+    },
+    "bg_colour": {
+      "file": "bg_colour.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        90,
+        160
+      ],
+      "note": "bg_image with bg_mask, ('colour', (0.0, 0.6941176470588235, 0.25098039215686274))",
+      "sha256": "23d0f4517ab6a646e594b7c0d242ca2e326e3f3a0c382a40c698ca2807faca8e",
+      "bytes": 172800
+    },
+    "bg_combined": {
+      "file": "bg_combined.f32",
+      "dtype": "float32",
+      "shape": [
+        90,
+        120
+      ],
+      "note": "mean + feather, frame 640x360",
+      "sha256": "72462043ce9f31e6f6c9aa49a11a3c92b0e6ff113cefd642a0a55f1f109b433c",
+      "bytes": 43200
+    },
+    "bg_image": {
+      "file": "bg_image.f32",
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        90,
+        160
+      ],
+      "note": "gym_b at 160x90",
+      "sha256": "ad08d3b7183ad46bb4d0bd651152f4ccd192432fcb1e6d411f6c405259033126",
+      "bytes": 172800
+    },
+    "bg_mask": {
+      "file": "bg_mask.f32",
+      "dtype": "float32",
+      "shape": [
+        30,
+        40
+      ],
+      "note": "40x30 person-like mask in [0, 1]",
+      "sha256": "e61966733880ca7a42a08cd8a9935ca6b4ef2be55346b47ff33c79268180d2e2",
+      "bytes": 4800
+    },
+    "bg_masks": {
+      "file": "bg_masks.u8",
+      "dtype": "uint8",
+      "shape": [
+        5,
+        90,
+        120
+      ],
+      "note": "5 noisy 120x90 person masks",
+      "sha256": "fa41c21f2c5a5f73f8f5831b7f62e66983785fb5a6e4e60be67f7fe3b611e67e",
+      "bytes": 54000
+    },
     "comic_ailut_out": {
       "file": "comic_ailut_out.png",
       "dtype": "uint8",
@@ -614,6 +709,18 @@
       "sha256": "9869238046722945a111696fb63686076df86b82165d2ebeeb02a1007d610122",
       "bytes": 246146
     },
+    "synthetic_clean.mp4": {
+      "file": "synthetic_clean.mp4",
+      "dtype": "h264",
+      "shape": [
+        20,
+        180,
+        320
+      ],
+      "note": "gradients + moving disk, crf 6",
+      "sha256": "8eeff3d7b9ad88465c2a796beb23d15e3f2ab4864e4a83fdb277626804b8a5e5",
+      "bytes": 29439
+    },
     "synthetic_f15_cb": {
       "file": "synthetic_f15_cb.u8",
       "dtype": "uint8",
@@ -659,6 +766,30 @@
       "note": "decoder output plane",
       "sha256": "855a99d728415cb3eda45ec6115f33732288cfb94e917ebbfbe78d4c79d8cf17",
       "bytes": 57600
+    },
+    "synthetic_noisy.mp4": {
+      "file": "synthetic_noisy.mp4",
+      "dtype": "h264",
+      "shape": [
+        20,
+        180,
+        320
+      ],
+      "note": "synthetic_clean + temporal noise alls=14 seed 11, crf 6",
+      "sha256": "d6d34c3ec632a89a6b195c06944c1fe67d68c407fae32a81322cfff5f56323a5",
+      "bytes": 887763
+    },
+    "synthetic_person.mp4": {
+      "file": "synthetic_person.mp4",
+      "dtype": "h264",
+      "shape": [
+        24,
+        180,
+        320
+      ],
+      "note": "gym_b face panning 12 frames | comic 12 frames",
+      "sha256": "07782d72b8f4192776ec25c530b0686059ce88177a1a8df55582282c1edea4dc",
+      "bytes": 38319
     },
     "synthetic_shots.mp4": {
       "file": "synthetic_shots.mp4",

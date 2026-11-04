@@ -5,6 +5,7 @@ import Foundation
 let usage = """
 usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut 0.25] [--size 65] [--codec hevc|prores] [--no-audio] [--reframe 9:16|16:9]
                  [--subtitles srt|burn|both] [--subtitle-lang zh-CN] [--subtitle-file in.srt]
+                 [--denoise 0.5] [--background blur|white|black|green|#RRGGBB] [--background-strength 0.6]
        autograde --list-styles
        autograde --list-languages
        autograde --download-speech-model zh-CN
@@ -23,6 +24,9 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
   --subtitle-lang  recognition language (default zh-CN); see --list-languages
   --subtitle-file  use this SRT instead of recognising speech
   --download-speech-model LANG  download that language's system speech model (network; needed once)
+  --denoise S  temporal noise reduction, strength 0-1 (macOS 26+)
+  --background behind people: blur, or a flat colour (white, black, green, #RRGGBB)
+  --background-strength S  blur strength 0-1 (default 0.6; sigma = 3% of the height at 1)
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
@@ -44,6 +48,7 @@ struct Options {
     var subtitles: String?        // srt | burn | both
     var subtitleLang = "zh-CN"
     var subtitleFile: URL?
+    var enhance = EnhanceSettings()
 }
 
 func fail(_ message: String) -> Never {
@@ -63,6 +68,7 @@ func parse(_ args: [String]) -> Options {
     var reframe: Aspect?
     var reframeCSV: URL?
     var subtitles: String?, subtitleLang = "zh-CN", subtitleFile: URL?
+    var denoise: Float?, background: String?, backgroundStrength = BackgroundEffect.defaultBlurStrength
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -85,6 +91,15 @@ func parse(_ args: [String]) -> Options {
             subtitles = v
         case "--subtitle-lang": subtitleLang = value(arg)
         case "--subtitle-file": subtitleFile = URL(fileURLWithPath: value(arg))
+        case "--denoise":
+            let v = convert(value(arg), Float.init, "--denoise wants a strength 0-1")
+            guard (0...1).contains(v) else { fail("--denoise wants a strength 0-1") }
+            denoise = v
+        case "--background": background = value(arg)
+        case "--background-strength":
+            let v = convert(value(arg), Float.init, "--background-strength wants 0-1")
+            guard (0...1).contains(v) else { fail("--background-strength wants 0-1") }
+            backgroundStrength = v
         case "--list-languages": listLanguages(); exit(0)
         case "--download-speech-model": downloadModel(value(arg)); exit(0)
         case "--list-styles": listStyles(); exit(0)
@@ -96,8 +111,16 @@ func parse(_ args: [String]) -> Options {
     }
     guard let input, let output else { fail(usage) }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
+    if denoise != nil && !EnhanceSettings.denoiseAvailable { fail("--denoise needs macOS 26 or later") }
+    let effect: BackgroundEffect? = background.map {
+        guard let e = BackgroundEffect(name: $0, strength: backgroundStrength) else {
+            fail("--background is blur, white, black, green or #RRGGBB")
+        }
+        return e
+    }
     return Options(input: input, output: output, cubeDir: cubeDir, cut: cut, size: size, codec: codec, style: style, audio: audio, reframe: reframe,
-                   reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile)
+                   reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile,
+                   enhance: EnhanceSettings(denoise: denoise, background: effect))
 }
 
 func listLanguages() {
@@ -222,9 +245,24 @@ do {
     let burn = (options.subtitles == "burn" || options.subtitles == "both") ? cues.map {
         SubtitleBurn(cues: $0, width: outSize.0, height: outSize.1, kernels: engine.kernels)
     } : nil
+    var enhance = options.enhance
+    if enhance.background != nil {
+        let start = Date()
+        let coverage = try engine.personCoverage(options.input, analysis: analysis)
+        let people = PersonSegmentation.shotsWithPeople(coverage: coverage, shots: analysis.shots)
+        enhance.backgroundShots = people
+        let skipped = people.indices.filter { !people[$0] }.map { String($0 + 1) }
+        print(String(format: "people:  %.2f s, %d of %d shots", Date().timeIntervalSince(start), people.count - skipped.count, people.count)
+              + (skipped.isEmpty ? "" : "; no one found in shot \(skipped.joined(separator: ", ")), background left as it is"))
+    }
     let result = try engine.render(options.input, analysis: analysis, luts: analysis.luts, to: options.output,
-                                   codec: options.codec, audio: options.audio, reframe: path, subtitles: burn)
+                                   codec: options.codec, audio: options.audio, reframe: path, subtitles: burn,
+                                   enhance: enhance.isEmpty ? nil : enhance)
     let r = result.times
+    if let e = result.enhance {
+        print("enhance: " + [e.denoise.map { String(format: "denoise %.2f", $0) }, e.background.map { "background \($0)" }]
+            .compactMap { $0 }.joined(separator: ", "))
+    }
     for warning in result.warnings { print("warning: \(warning)") }
     print("render:  decode \(ms(r.decode, r.frames)), yuv→rgb \(ms(r.convert, r.frames)), apply+bgra \(ms(r.apply, r.frames)), "
           + "encode \(ms(r.encode, r.frames))")

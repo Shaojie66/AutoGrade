@@ -149,9 +149,13 @@ extension AutoGrader {
         let reframed = try render.reframe.map {
             try ReframeTargets(kernels: kernels, sourceWidth: analysis.info.width, sourceHeight: analysis.info.height, aspect: $0.aspect)
         }
+        // the same enhancements, prepared from the same window as the render did
+        let enhancer = try render.enhance.map {
+            try Enhancer(settings: $0, width: analysis.info.width, height: analysis.info.height, kernels: kernels)
+        }
         for k in ExportCheck.sampledShots(analysis.shots.count) {
             let shot = analysis.shots[k], index = (shot.first + shot.last) / 2
-            let sourceFrame = try decodeFrame(source, analysis: analysis, index: index)
+            let sourceFrame = try decodeFrame(source, analysis: analysis, index: index, enhancer: enhancer, exact: true)
             let texture: MTLTexture
             if let path = render.reframe, let reframed {
                 try previewReframed(sourceFrame, lut: luts[k], path: path, into: reframed, subtitles: render.subtitles)

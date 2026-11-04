@@ -34,6 +34,14 @@ enum Fixtures {
         let vfr_frame_times: [Double]
         let crop_cases: [CropCase]
         let overlay_cases: [OverlayCase]
+        let background_cases: [BackgroundCase]
+    }
+
+    struct BackgroundCase: Decodable {
+        let name: String
+        let effect: String
+        let sigma: Float
+        let colour: [Float]
     }
 
     struct OverlayCase: Decodable {

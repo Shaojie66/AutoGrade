@@ -61,6 +61,25 @@ public struct DecodedFrame {
     public let chroma: MTLTexture
     let lumaRef: CVMetalTexture
     let chromaRef: CVMetalTexture
+
+    /// Metal views of a '420v' buffer's two planes.
+    init(index: Int, presentationTime: CMTime, pixelBuffer: CVPixelBuffer, cache: CVMetalTextureCache) throws {
+        func texture(_ plane: Int, _ format: MTLPixelFormat) throws -> CVMetalTexture {
+            var tex: CVMetalTexture?
+            let status = CVMetalTextureCacheCreateTextureFromImage(
+                nil, cache, pixelBuffer, nil, format,
+                CVPixelBufferGetWidthOfPlane(pixelBuffer, plane), CVPixelBufferGetHeightOfPlane(pixelBuffer, plane), plane, &tex)
+            guard status == kCVReturnSuccess, let tex else { throw VideoError.reader("plane \(plane) texture: \(status)") }
+            return tex
+        }
+        self.index = index
+        self.presentationTime = presentationTime
+        self.pixelBuffer = pixelBuffer
+        lumaRef = try texture(0, .r8Unorm)
+        chromaRef = try texture(1, .rg8Unorm)
+        luma = CVMetalTextureGetTexture(lumaRef)!
+        chroma = CVMetalTextureGetTexture(chromaRef)!
+    }
 }
 
 /// Sequential decoder. Accepts only 8-bit 4:2:0 BT.709 limited range (or
@@ -173,12 +192,7 @@ public final class VideoReader {
             index = nextIndex
             nextIndex += 1
         }
-        let luma = try texture(pixelBuffer, plane: 0, format: .r8Unorm)
-        let chroma = try texture(pixelBuffer, plane: 1, format: .rg8Unorm)
-        return DecodedFrame(index: index, presentationTime: pts,
-                            pixelBuffer: pixelBuffer,
-                            luma: CVMetalTextureGetTexture(luma)!, chroma: CVMetalTextureGetTexture(chroma)!,
-                            lumaRef: luma, chromaRef: chroma)
+        return try DecodedFrame(index: index, presentationTime: pts, pixelBuffer: pixelBuffer, cache: cache)
     }
 
     static func index(of time: CMTime, in times: [CMTime]) -> Int? {
@@ -189,15 +203,6 @@ public final class VideoReader {
             if times[mid] < time { lo = mid + 1 } else { hi = mid - 1 }
         }
         return nil
-    }
-
-    private func texture(_ buffer: CVPixelBuffer, plane: Int, format: MTLPixelFormat) throws -> CVMetalTexture {
-        var tex: CVMetalTexture?
-        let status = CVMetalTextureCacheCreateTextureFromImage(
-            nil, cache, buffer, nil, format,
-            CVPixelBufferGetWidthOfPlane(buffer, plane), CVPixelBufferGetHeightOfPlane(buffer, plane), plane, &tex)
-        guard status == kCVReturnSuccess, let tex else { throw VideoError.reader("plane \(plane) texture: \(status)") }
-        return tex
     }
 }
 

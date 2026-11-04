@@ -20,6 +20,7 @@ struct Summary: Sendable {
     let hasAudio: Bool
     let reframe: ReframeInfo?
     let subtitles: [SubtitleCue]
+    let enhance: EnhanceSettings         // as applied: backgroundShots filled in for the current shots
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -73,6 +74,10 @@ actor Engine {
     private var showSubtitles = false
     private var burns: [String: SubtitleBurn] = [:]
     private var finals: [LUT3D] = []
+    // enhancement (CLAUDE.md 画质增强): what the user chose; the person pass is per video
+    private var enhanceChoice = EnhanceSettings()
+    private var coverage: [Float]?
+    private var enhancer: Enhancer?
     /// Three slots so the slot being drawn is never the one being written.
     private var previewSlots: [PreviewTargets] = []
     private var nextSlot = 0
@@ -111,6 +116,9 @@ actor Engine {
         cropOverrides = Array(repeating: nil, count: result.shots.count)
         cues = []
         burns = [:]
+        enhanceChoice = EnhanceSettings()
+        coverage = nil
+        enhancer = nil
         previewSlots = try (0..<3).map { _ in
             try PreviewTargets(kernels: core.kernels, width: result.info.width, height: result.info.height)
         }
@@ -305,6 +313,41 @@ actor Engine {
     private func rebuildFinals() throws {
         guard let a = analysis else { return }
         finals = try core.finalLUTs(a, strengths: strengths)
+        try refreshEnhancer()
+    }
+
+    /// The settings as applied to the current shots (which shots have people).
+    private func appliedEnhance() -> EnhanceSettings {
+        var e = enhanceChoice
+        if e.background != nil, let coverage, let a = analysis {
+            e.backgroundShots = PersonSegmentation.shotsWithPeople(coverage: coverage, shots: a.shots)
+        }
+        return e
+    }
+
+    /// A new enhancer only when what it would do changed (cut edits move shots).
+    private func refreshEnhancer() throws {
+        guard let a = analysis else { return }
+        let e = appliedEnhance()
+        if e.isEmpty { enhancer = nil; return }
+        if enhancer?.settings == e { return }
+        enhancer = try Enhancer(settings: e, width: a.info.width, height: a.info.height, kernels: core.kernels)
+    }
+
+    /// Change noise reduction and the background; the first background choice
+    /// runs the person pass over the whole video (cancellable, CLAUDE.md 背景).
+    func setEnhance(denoise: Float?, background: BackgroundEffect?, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis else { return try noVideo() }
+        if background != nil, coverage == nil {
+            let token = control.begin()
+            defer { control.end(token) }
+            coverage = try core.personCoverage(source, analysis: a, cancel: token) { i in
+                progress(Double(i + 1) / Double(a.frameCount))
+            }
+        }
+        enhanceChoice = EnhanceSettings(denoise: denoise, background: background)
+        try refreshEnhancer()
+        return summary()
     }
 
     private func summary() -> Summary {
@@ -322,6 +365,7 @@ actor Engine {
                                        centers: p.centers, modes: p.modes)
                        },
                        subtitles: cues,
+                       enhance: appliedEnhance(),
                        shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
@@ -333,23 +377,24 @@ actor Engine {
     /// `output`: the reframed picture ("成片", the export's bytes) when a crop is set.
     func frame(_ index: Int, output: Bool = false) throws -> DisplayFrame {
         guard let source, let a = analysis else { throw VideoError.reader("no video is open") }
-        let decoded = try core.decodeFrame(source, analysis: a, index: index)
+        let decoded = try core.decodeFrame(source, analysis: a, index: index, enhancer: enhancer)
         return try present(decoded, analysis: a, output: output)
     }
 
-    private func present(_ decoded: DecodedFrame, analysis a: Analysis, output: Bool) throws -> DisplayFrame {
-        let lut = finals[a.shotIndex(forFrame: decoded.index)]
+    private func present(_ decoded: EnhancedFrame, analysis a: Analysis, output: Bool) throws -> DisplayFrame {
+        let index = decoded.frame.index
+        let lut = finals[a.shotIndex(forFrame: index)]
         if output, let path, !reframeSlots.isEmpty {
             let slot = reframeSlots[nextSlot % reframeSlots.count]
             nextSlot = (nextSlot + 1) % 3
             let (w, h) = path.outputSize
             try core.previewReframed(decoded, lut: lut, path: path, into: slot, subtitles: showSubtitles ? burn(w, h) : nil)
-            return DisplayFrame(index: decoded.index, original: slot.output, graded: slot.output)
+            return DisplayFrame(index: index, original: slot.output, graded: slot.output)
         }
         let slot = previewSlots[nextSlot]
         nextSlot = (nextSlot + 1) % previewSlots.count
         try core.preview(decoded, lut: lut, into: slot, subtitles: showSubtitles ? burn(a.info.width, a.info.height) : nil)
-        return DisplayFrame(index: decoded.index, original: slot.original, graded: slot.graded)
+        return DisplayFrame(index: index, original: slot.original, graded: slot.graded)
     }
 
     /// The shot list picture: the shot's middle frame, graded at its strength.
@@ -387,10 +432,11 @@ actor Engine {
     /// edits interleave with playback.
     func play(from index: Int, output: Bool = false, onFrame: @escaping @Sendable (DisplayFrame, PlaybackStats) -> Void) async {
         guard let source, let a = analysis, index < a.frameCount else { return }
-        let reader: VideoReader
+        // with enhancements every frame is still prepared (masks and the denoise
+        // chain need their neighbours); a late frame is only not graded
+        let stream: EnhancedFrameStream
         do {
-            reader = try VideoReader(url: source, device: core.metal.device,
-                                     timeRange: a.timeRange(first: index, last: a.frameCount - 1), frameTimes: a.frameTimes)
+            stream = try core.frameStream(source, analysis: a, from: index, enhancer: enhancer)
         } catch { return }
         let clock = ContinuousClock()
         let start = clock.now
@@ -399,8 +445,8 @@ actor Engine {
         var dropped = 0, shown = 0
         var window: [ContinuousClock.Instant] = []
         while !Task.isCancelled {
-            guard let decoded = try? reader.next() else { break }
-            let due = start + .seconds((decoded.presentationTime - origin).seconds)
+            guard let decoded = try? stream.next() else { break }
+            let due = start + .seconds((decoded.frame.presentationTime - origin).seconds)
             if clock.now > due + slack {
                 dropped += 1
                 continue
@@ -435,7 +481,8 @@ actor Engine {
             : output
         let size = path?.outputSize ?? (a.info.width, a.info.height)
         let rendered = try core.render(source, analysis: a, luts: finals, to: target, codec: codec, audio: audio,
-                                       reframe: path, subtitles: burnSubtitles ? burn(size.0, size.1) : nil, cancel: token) { i in
+                                       reframe: path, subtitles: burnSubtitles ? burn(size.0, size.1) : nil,
+                                       enhance: enhancer?.settings, cancel: token) { i in
             progress(Double(i + 1) / Double(a.frameCount))
         }
         checking()

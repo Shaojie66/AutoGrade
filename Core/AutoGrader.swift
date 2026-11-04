@@ -34,9 +34,12 @@ public struct RenderResult: Sendable {
     public let reframe: CropPath?
     /// The subtitles burnt in, if any (CLAUDE.md 字幕).
     public let subtitles: SubtitleBurn?
+    /// The enhancements applied, if any (CLAUDE.md 画质增强).
+    public let enhance: EnhanceSettings?
 
     public init(times: StageTimes, codec: OutputCodec, audioPackets: Int?, warnings: [String], reframe: CropPath?,
-                subtitles: SubtitleBurn? = nil) {
+                subtitles: SubtitleBurn? = nil, enhance: EnhanceSettings? = nil) {
+        self.enhance = enhance
         self.times = times
         self.codec = codec
         self.audioPackets = audioPackets
@@ -302,11 +305,23 @@ public final class AutoGrader {
     /// Grade one decoded frame into `targets` — the same encode path render uses.
     /// `subtitles` (sized for the source frame) are burnt into the graded picture only.
     public func preview(_ frame: DecodedFrame, lut: LUT3D, into targets: PreviewTargets, subtitles: SubtitleBurn? = nil) throws {
-        let overlay = try subtitles?.overlay(at: frame.presentationTime.seconds)
+        try preview(EnhancedFrame(frame), lut: lut, into: targets, subtitles: subtitles)
+    }
+
+    /// The enhanced variant (`decodeFrame(_:analysis:index:enhancer:)`): `original`
+    /// shows the decoder's frame, `graded` the enhanced one.
+    public func preview(_ frame: EnhancedFrame, lut: LUT3D, into targets: PreviewTargets, subtitles: SubtitleBurn? = nil) throws {
+        let overlay = try subtitles?.overlay(at: frame.frame.presentationTime.seconds)
+        let denoised = frame.frame.pixelBuffer !== frame.source.pixelBuffer
         try metal.run { enc in
-            try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
-                                         scratch: targets.scratch, graded: targets.graded, original: targets.original,
-                                         overlay: overlay)
+            if denoised {
+                try kernels.encodeYUVToRGB(into: enc, luma: frame.source.luma, chroma: frame.source.chroma, output: targets.scratch.rgb)
+                try kernels.encodeWriteBGRA8(into: enc, targets.scratch.rgb, to: targets.original)
+            }
+            try kernels.encodeGradeFrame(into: enc, luma: frame.frame.luma, chroma: frame.frame.chroma, lut: lut,
+                                         scratch: targets.scratch, graded: targets.graded,
+                                         original: denoised ? nil : targets.original,
+                                         background: frame.background, overlay: overlay)
         }
     }
 
@@ -314,11 +329,17 @@ public final class AutoGrader {
     /// path a reframed render uses (CLAUDE.md 重构图: 成片 = export bytes).
     public func previewReframed(_ frame: DecodedFrame, lut: LUT3D, path: CropPath, into targets: ReframeTargets,
                                 subtitles: SubtitleBurn? = nil) throws {
-        let overlay = try subtitles?.overlay(at: frame.presentationTime.seconds)
+        try previewReframed(EnhancedFrame(frame), lut: lut, path: path, into: targets, subtitles: subtitles)
+    }
+
+    public func previewReframed(_ frame: EnhancedFrame, lut: LUT3D, path: CropPath, into targets: ReframeTargets,
+                                subtitles: SubtitleBurn? = nil) throws {
+        let f = frame.frame
+        let overlay = try subtitles?.overlay(at: f.presentationTime.seconds)
         try metal.run { enc in
-            try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut, scratch: targets.scratch,
-                                         crop: path.origins[frame.index], length: path.length, cropped: targets.cropped,
-                                         output: targets.output, overlay: overlay)
+            try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
+                                         crop: path.origins[f.index], length: path.length, cropped: targets.cropped,
+                                         output: targets.output, background: frame.background, overlay: overlay)
         }
     }
 
@@ -342,7 +363,7 @@ public final class AutoGrader {
     /// removed. `frameHook` sees each graded BGRA buffer before it is appended (tests).
     public func render(_ url: URL, analysis: Analysis, luts: [LUT3D], to output: URL, codec: OutputCodec = .hevc,
                        audio: Bool = true, reframe: CropPath? = nil, subtitles: SubtitleBurn? = nil,
-                       cancel: CancelToken? = nil,
+                       enhance: EnhanceSettings? = nil, cancel: CancelToken? = nil,
                        progress: ((Int) -> Void)? = nil,
                        frameHook: ((Int, CVPixelBuffer) -> Void)? = nil) throws -> RenderResult {
         precondition(luts.count == analysis.shots.count)
@@ -356,9 +377,15 @@ public final class AutoGrader {
             let scratch = (try kernels.makeImage(width: reader.info.width, height: reader.info.height),
                            try kernels.makeImage(width: reader.info.width, height: reader.info.height))
             let cropped = try reframe.map { _ in try kernels.makeImage(width: size.0, height: size.1) }
+            let enhance = enhance?.isEmpty == false ? enhance : nil
+            let enhancer = try enhance.map {
+                try Enhancer(settings: $0, width: reader.info.width, height: reader.info.height, kernels: kernels)
+            }
+            let frames = EnhancedFrameStream(reader: reader, analysis: analysis, enhancer: enhancer)
             var times = StageTimes()
             var clock = Clock()
-            while let frame = try reader.next() {
+            while let enhanced = try frames.next() {
+                let frame = enhanced.frame
                 if cancel?.isCancelled == true { throw Cancelled() }
                 times.decode += clock.lap()
                 let (pixels, texture, textureRef) = try writer.makeFrame()
@@ -368,10 +395,12 @@ public final class AutoGrader {
                     if let reframe, let cropped {
                         try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
                                                      scratch: scratch, crop: reframe.origins[frame.index],
-                                                     length: reframe.length, cropped: cropped, output: texture, overlay: overlay)
+                                                     length: reframe.length, cropped: cropped, output: texture,
+                                                     background: enhanced.background, overlay: overlay)
                     } else {
                         try kernels.encodeGradeFrame(into: enc, luma: frame.luma, chroma: frame.chroma, lut: lut,
-                                                     scratch: scratch, graded: texture, original: nil, overlay: overlay)
+                                                     scratch: scratch, graded: texture, original: nil,
+                                                     background: enhanced.background, overlay: overlay)
                     }
                 }
                 withExtendedLifetime(textureRef) {}
@@ -388,7 +417,7 @@ public final class AutoGrader {
                 throw VideoError.reader("render decoded \(times.frames) frames, analysis saw \(analysis.frameCount)")
             }
             return RenderResult(times: times, codec: codec, audioPackets: writer.audioPackets, warnings: writer.warnings,
-                                reframe: reframe, subtitles: subtitles)
+                                reframe: reframe, subtitles: subtitles, enhance: enhance)
         } catch {
             writer.cancel()
             throw error

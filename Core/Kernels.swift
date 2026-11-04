@@ -300,15 +300,17 @@ public final class GradeKernels: @unchecked Sendable {
     }
 
     /// The one grading path shared by preview and export (CLAUDE.md 架构原则 5):
-    /// decoder planes -> RGB -> final LUT -> BGRA8 in `graded`; optionally the
+    /// decoder planes -> RGB -> final LUT -> (background) -> (subtitle) -> BGRA8 in `graded`; optionally the
     /// ungraded RGB -> BGRA8 in `original`. `scratch` must match the frame size.
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
                                  lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
                                  graded: MTLTexture, original: MTLTexture?,
+                                 background: (MaskImage, BackgroundScratch)? = nil,
                                  overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
         try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
         if let original { try encodeWriteBGRA8(into: enc, scratch.rgb, to: original) }
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
+        if let (mask, bg) = background { try encodeBackground(into: enc, scratch.graded, mask: mask, scratch: bg) }
         if let overlay { try encodeOverlay(into: enc, scratch.graded, overlay.0, origin: overlay.1) }
         try encodeWriteBGRA8(into: enc, scratch.graded, to: graded)
     }
@@ -318,9 +320,11 @@ public final class GradeKernels: @unchecked Sendable {
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
                                  lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
                                  crop origin: SIMD2<Float>, length: SIMD2<Float>, cropped: PlanarImage,
-                                 output: MTLTexture, overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
+                                 output: MTLTexture, background: (MaskImage, BackgroundScratch)? = nil,
+                                 overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
         try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
+        if let (mask, bg) = background { try encodeBackground(into: enc, scratch.graded, mask: mask, scratch: bg) }
         try encodeCropResize(into: enc, scratch.graded, origin: origin, length: length, output: cropped)
         if let overlay { try encodeOverlay(into: enc, cropped, overlay.0, origin: overlay.1) }
         try encodeWriteBGRA8(into: enc, cropped, to: output)

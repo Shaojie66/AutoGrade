@@ -141,6 +141,102 @@ kernel void overlay_premultiplied(device float *img            [[buffer(0)]],
     img[i + 2 * n] = img[i + 2 * n] * (1.0f - o.a) + o.b;
 }
 
+// -------------------------------------------------------------- background --
+// Person-mask compositing (CLAUDE.md 背景合成), on the graded full frame in
+// place. The mask stays at the segmenter's size (float, averaged and feathered
+// on the CPU) and is sampled at each frame pixel bilinearly, align_corners=
+// False, edge clamped — the same formula as resize_bilinear.
+struct MaskParams { uint w, h, mw, mh; };
+
+static inline float sample_mask(device const float *mask, uint w, uint h, uint mw, uint mh, uint x, uint y)
+{
+    const float sx = float(mw) / float(w), sy = float(mh) / float(h);
+    const float xr = max(sx * (float(x) + 0.5f) - 0.5f, 0.0f);
+    const float yr = max(sy * (float(y) + 0.5f) - 0.5f, 0.0f);
+    const uint x0 = min(uint(xr), mw - 1), y0 = min(uint(yr), mh - 1);
+    const uint xp = x0 < mw - 1 ? 1 : 0, yp = y0 < mh - 1 ? 1 : 0;
+    const float l1 = xr - float(x0), l0 = 1.0f - l1;
+    const float h1 = yr - float(y0), h0 = 1.0f - h1;
+    return h0 * (l0 * mask[y0 * mw + x0] + l1 * mask[y0 * mw + x0 + xp])
+         + h1 * (l0 * mask[(y0 + yp) * mw + x0] + l1 * mask[(y0 + yp) * mw + x0 + xp]);
+}
+
+// Mean of `count` 8-bit masks (count planes of w*h bytes) in [0, 1]:
+// sum as integers, then one multiply, like the numpy reference.
+struct MaskMeanParams { uint w, h, count; };
+
+kernel void mask_mean(device const uchar *masks     [[buffer(0)]],
+                      device float *out             [[buffer(1)]],
+                      constant MaskMeanParams &p    [[buffer(2)]],
+                      uint2 g                       [[thread_position_in_grid]])
+{
+    if (g.x >= p.w || g.y >= p.h) return;
+    const uint n = p.w * p.h, i = g.y * p.w + g.x;
+    uint sum = 0;
+    for (uint k = 0; k < p.count; k++) sum += masks[k * n + i];
+    out[i] = float(sum) / float(255 * p.count);
+}
+
+// The blurred background's numerator and denominator: float[4][h][w] =
+// (img_c * (1-m), 1-m). Blurring both and dividing keeps the person's colours
+// out of the background (normalised convolution).
+kernel void background_weight(device const float *img  [[buffer(0)]],
+                              device const float *mask [[buffer(1)]],
+                              device float *out        [[buffer(2)]],
+                              constant MaskParams &p   [[buffer(3)]],
+                              uint2 g                  [[thread_position_in_grid]])
+{
+    if (g.x >= p.w || g.y >= p.h) return;
+    const uint n = p.w * p.h, i = g.y * p.w + g.x;
+    const float wgt = 1.0f - sample_mask(mask, p.w, p.h, p.mw, p.mh, g.x, g.y);
+    for (uint c = 0; c < 3; c++) out[c * n + i] = img[c * n + i] * wgt;
+    out[3 * n + i] = wgt;
+}
+
+// One axis of a separable blur over `planes` planes: weights[0 ... 2r],
+// summed from -r to r in order, edge clamped.
+struct BlurParams { uint w, h, planes, radius, vertical; };
+
+kernel void blur_separable(device const float *src     [[buffer(0)]],
+                           device float *dst           [[buffer(1)]],
+                           device const float *weights [[buffer(2)]],
+                           constant BlurParams &p      [[buffer(3)]],
+                           uint3 g                     [[thread_position_in_grid]])
+{
+    if (g.x >= p.w || g.y >= p.h || g.z >= p.planes) return;
+    device const float *s = src + g.z * p.w * p.h;
+    const int r = int(p.radius);
+    float acc = 0.0f;
+    for (int j = -r; j <= r; j++) {
+        const int x = p.vertical ? int(g.x) : clamp(int(g.x) + j, 0, int(p.w) - 1);
+        const int y = p.vertical ? clamp(int(g.y) + j, 0, int(p.h) - 1) : int(g.y);
+        acc += weights[j + r] * s[y * int(p.w) + x];
+    }
+    dst[g.z * p.w * p.h + g.y * p.w + g.x] = acc;
+}
+
+// out = img*m + bg*(1-m) in place. bg: the blurred numerator / denominator
+// (`blurred`; the image itself where the denominator is ~0), or a colour.
+struct CompositeParams { uint w, h, mw, mh; float r, g, b; uint blurred; };
+
+kernel void mask_composite(device float *img            [[buffer(0)]],
+                           device const float *mask     [[buffer(1)]],
+                           device const float *blurred  [[buffer(2)]],
+                           constant CompositeParams &p  [[buffer(3)]],
+                           uint2 g                      [[thread_position_in_grid]])
+{
+    if (g.x >= p.w || g.y >= p.h) return;
+    const uint n = p.w * p.h, i = g.y * p.w + g.x;
+    const float m = sample_mask(mask, p.w, p.h, p.mw, p.mh, g.x, g.y);
+    const float colour[3] = {p.r, p.g, p.b};
+    const float den = p.blurred ? blurred[3 * n + i] : 0.0f;
+    for (uint c = 0; c < 3; c++) {
+        const float v = img[c * n + i];
+        const float bg = p.blurred ? (den > 1e-6f ? blurred[c * n + i] / den : v) : colour[c];
+        img[c * n + i] = v * m + bg * (1.0f - m);
+    }
+}
+
 // ------------------------------------------------------------------- AiLUT --
 // Mirrors upstream ailut_transform_cpu.cpp: lower_bound + trilinear, same eps,
 // same operation order.

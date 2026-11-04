@@ -18,6 +18,12 @@ struct ExportSheet: View {
                 let name = r == .vertical9x16 ? L(S.aspectVertical) : r == .horizontal16x9 ? L(S.aspectHorizontal) : L(S.aspectOriginal)
                 Text(L(S.exportFrame(name, size.0, size.1))).font(.callout).foregroundStyle(.secondary)
             }
+            if let parts = enhanceParts {
+                Text(L(S.exportEnhance(parts))).font(.callout).foregroundStyle(.secondary)
+                if !project.shotsWithoutPeople.isEmpty {
+                    Text(L(S.noPeopleInShots(project.shotsWithoutPeople))).font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Toggle(L(S.alsoCubes), isOn: $project.exportCubes)
             Toggle(L(S.exportSRT), isOn: project.subtitles.isEmpty ? .constant(false) : $project.exportSRT)
                 .disabled(project.subtitles.isEmpty)
@@ -37,5 +43,20 @@ struct ExportSheet: View {
         }
         .padding(20)
         .frame(width: 380)
+    }
+
+    /// What the export will apply, in the menu's words; nil when nothing.
+    private var enhanceParts: [Copy]? {
+        let e = project.enhance
+        var parts: [Copy] = []
+        if let d = e.denoise { parts.append(Copy(en: "\(S.denoise.en) \(d >= 1 ? S.denoiseStrong.en : S.denoiseStandard.en)",
+                                                zh: "\(S.denoise.zh)\(d >= 1 ? S.denoiseStrong.zh : S.denoiseStandard.zh)")) }
+        switch e.background {
+        case .blur(let x)?: parts.append(x >= 1 ? S.blurStrong : x < 0.5 ? S.blurLight : S.blurStandard)
+        case .colour?: parts.append(e.background == .white ? S.backgroundWhite : e.background == .black ? S.backgroundBlack
+                                    : e.background == .green ? S.backgroundGreen : S.background)
+        case nil: break
+        }
+        return parts.isEmpty ? nil : parts
     }
 }

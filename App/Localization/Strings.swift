@@ -82,6 +82,34 @@ enum S {
     static let subtitlesNeedMac26 = Copy(en: "Recognising speech needs macOS 26 or later. You can still import an SRT.",
                                          zh: "识别语音需要 macOS 26 或更高版本，仍可导入 SRT。")
 
+    // enhancement (CLAUDE.md 画质增强)
+    static let enhanceMenu = Copy(en: "Picture", zh: "画质")
+    static let denoise = Copy(en: "Noise Reduction", zh: "降噪")
+    static let off = Copy(en: "Off", zh: "关")
+    static let denoiseStandard = Copy(en: "Standard", zh: "标准")
+    static let denoiseStrong = Copy(en: "Strong", zh: "强")
+    static let denoiseNeedsMac26 = Copy(en: "Noise reduction needs macOS 26", zh: "降噪需要 macOS 26")
+    static let denoisePreviewNote = Copy(en: "Preview is close; the export is exact", zh: "预览为近似效果，导出精确")
+    static let background = Copy(en: "Background", zh: "背景")
+    static let backgroundNone = Copy(en: "Unchanged", zh: "不处理")
+    static let blurLight = Copy(en: "Blur: Light", zh: "虚化：轻")
+    static let blurStandard = Copy(en: "Blur: Standard", zh: "虚化：标准")
+    static let blurStrong = Copy(en: "Blur: Strong", zh: "虚化：强")
+    static let backgroundWhite = Copy(en: "White", zh: "白色")
+    static let backgroundBlack = Copy(en: "Black", zh: "黑色")
+    static let backgroundGreen = Copy(en: "Green Screen", zh: "绿幕")
+    static let backgroundPeopleOnly = Copy(en: "Only people are kept in front", zh: "只保留画面中的人")
+    static let findingPeople = Copy(en: "Finding people", zh: "正在识别人物")
+    static let enhanceFailed = Copy(en: "Couldn’t change the picture settings", zh: "无法更改画质设置")
+    static func noPeopleInShots(_ shots: [Int]) -> Copy {
+        let list = shots.map { String($0 + 1) }.joined(separator: ", ")
+        return Copy(en: "No one found in shot \(list): background left as it is",
+                    zh: "镜头 \(list) 未识别到人物，背景保持原样")
+    }
+    static func exportEnhance(_ parts: [Copy]) -> Copy {
+        Copy(en: "Picture: " + parts.map(\.en).joined(separator: " · "), zh: "画质：" + parts.map(\.zh).joined(separator: " · "))
+    }
+
     // reframe
     static let aspect = Copy(en: "Frame", zh: "画幅")
     static let aspectOriginal = Copy(en: "Original", zh: "原始")

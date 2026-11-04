@@ -318,6 +318,38 @@ final class Project {
         seek(min(Int(t * s.frameRate), s.frameCount - 1))
     }
 
+    // MARK: enhancement (CLAUDE.md 画质增强)
+
+    var enhance: EnhanceSettings { summary?.enhance ?? EnhanceSettings() }
+
+    /// Shots the background effect leaves alone because no one was found in them.
+    var shotsWithoutPeople: [Int] {
+        guard enhance.background != nil, let people = enhance.backgroundShots else { return [] }
+        return people.indices.filter { !people[$0] }
+    }
+
+    func setDenoise(_ strength: Float?) { setEnhance(denoise: strength, background: enhance.background) }
+    func setBackground(_ effect: BackgroundEffect?) { setEnhance(denoise: enhance.denoise, background: effect) }
+
+    /// The first background choice finds people in every frame (busy, cancellable).
+    private func setEnhance(denoise: Float?, background: BackgroundEffect?) {
+        guard let engine, canEdit, denoise != enhance.denoise || background != enhance.background else { return }
+        stopPlaying()
+        busy = S.findingPeople
+        busyProgress = 0
+        Task {
+            do {
+                apply(try await engine.setEnhance(denoise: denoise, background: background) { p in
+                    Task { @MainActor in self.busyProgress = p }
+                }, keepThumbnails: true)
+            } catch is Cancelled {
+            } catch {
+                alert = Alert(title: S.enhanceFailed, message: "\(error)")
+            }
+            busy = nil
+        }
+    }
+
     // MARK: reframe
 
     var reframe: ReframeInfo? { summary?.reframe }

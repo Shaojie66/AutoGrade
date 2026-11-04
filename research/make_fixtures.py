@@ -20,6 +20,10 @@ Contents
                 synthetic_subject.mp4: a disk moving left to right over noise (subject detection)
   crop        crop_*: crop-and-resize (reframe) cases, see CROP_CASES and the manifest
   overlay     overlay_rgba.u8 + overlay_*: subtitle compositing (premultiplied over)
+  background  bg_image / bg_mask + bg_blur / bg_colour: person-mask compositing;
+                bg_masks.u8 + bg_combined: mask average and feather (CPU)
+                synthetic_clean.mp4 / synthetic_noisy.mp4: the same 20 frames, clean and with noise
+                synthetic_person.mp4: a face (gym_b) panning, then a cut to comic
   subtitles   subtitles_sample.srt: a messy SRT for the lenient parser (BOM, CRLF, gaps)
                 synthetic_f15_{y,cb,cr}: decoder planes of frame 15
                 synthetic_f15_rgb: those planes through the YUV->RGB convention
@@ -149,6 +153,99 @@ def make_av(path, hz=440):
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
            "-c:a", "aac", "-b:a", "96k", "-ac", "1", "-flags:a", "+bitexact", "-fflags", "+bitexact", str(path))
+
+
+def make_noise_pair(clean, noisy):
+    """20 frames 320x180: slow gradients with a moving disk, encoded nearly
+    losslessly; the noisy one adds per-frame random noise (fixed seed) before
+    encoding. Same picture underneath, so denoising is measurable."""
+    base = ("color=c=black:size=320x180:rate=30,format=rgb24,"
+            "geq=r='128+90*sin(X/45+T)':g='120+70*cos(Y/35)':b='170-X/4'[bg];"
+            "color=c=0xffd040:size=40x40:rate=30,format=rgba,"
+            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-19.5,Y-19.5),20),255,0)'[disk];"
+            "[bg][disk]overlay=x='60+90*t':y=70:eval=frame")
+    for path, extra in ((clean, ""), (noisy, ",noise=alls=14:allf=t:all_seed=11")):
+        ffmpeg("-filter_complex", f"{base}{extra},format=yuv420p[out]", "-map", "[out]", "-frames:v", "20",
+               "-c:v", "libx264", "-preset", "veryslow", "-crf", "6", "-g", "30",
+               "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+               "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+               "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_person(path, face_png, other_png):
+    """12 frames of a face (a 576x324 window panning 2 px a frame over the
+    640x360 gym_b input), then a cut to 12 frames of comic (a 487x274 window); 320x180."""
+    ffmpeg("-loop", "1", "-framerate", "30", "-i", str(face_png), "-loop", "1", "-framerate", "30", "-i", str(other_png),
+           "-filter_complex", "[0]crop=576:324:x='2*n':y=18,scale=320:180,trim=end_frame=12,setpts=PTS-STARTPTS[a];"
+           "[1]crop=487:274:x=76:y=0,scale=320:180,trim=end_frame=12,setpts=PTS-STARTPTS[b];"
+           "[a][b]concat=n=2:v=1:a=0,format=yuv420p[out]", "-map", "[out]",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
+def gaussian_taps(sigma):
+    """Normalised taps for -r..r, r = ceil(3 sigma); [1] below 0.3 (CLAUDE.md 背景). float64."""
+    if sigma < 0.3:
+        return np.ones(1)
+    r = int(np.ceil(3 * sigma))
+    k = np.exp(-np.arange(-r, r + 1, dtype=np.float64) ** 2 / (2 * sigma * sigma))
+    return k / k.sum()
+
+
+def blur_axis(a, taps, axis):
+    """a (..., H, W) float64, one axis, edge clamped, summed from -r to r."""
+    r = len(taps) // 2
+    n = a.shape[axis]
+    out = np.zeros_like(a)
+    for j in range(-r, r + 1):
+        idx = np.clip(np.arange(n) + j, 0, n - 1)
+        out += taps[j + r] * np.take(a, idx, axis=axis)
+    return out
+
+
+def combine_masks(masks, frame_w, frame_h, feather=0.005):
+    """Mean of uint8 masks (n,h,w) in [0,1], then the feather blur per axis."""
+    h, w = masks.shape[1:]
+    mean = masks.astype(np.float64).sum(0) / (255 * len(masks))
+    f = feather * frame_h
+    out = blur_axis(mean, gaussian_taps(np.float32(f * w / frame_w)), 1)
+    return blur_axis(out, gaussian_taps(np.float32(f * h / frame_h)), 0)
+
+
+def sample_mask(mask, W, H):
+    """Bilinear, align_corners=False, edge clamped: (mh,mw) -> (H,W), like resize_bilinear."""
+    mh, mw = mask.shape
+    def axis(n_out, n_in):
+        r = np.maximum((n_in / n_out) * (np.arange(n_out) + 0.5) - 0.5, 0)
+        i0 = np.minimum(r.astype(np.int64), n_in - 1)
+        i1 = np.where(i0 < n_in - 1, i0 + 1, i0)
+        return i0, i1, r - i0
+    x0, x1, lx = axis(W, mw)
+    y0, y1, ly = axis(H, mh)
+    top = mask[y0][:, x0] * (1 - lx) + mask[y0][:, x1] * lx
+    bot = mask[y1][:, x0] * (1 - lx) + mask[y1][:, x1] * lx
+    return top * (1 - ly)[:, None] + bot * ly[:, None]
+
+
+def background(img, mask, effect):
+    """img (3,H,W) float64; mask (mh,mw); effect ("blur", sigma) or ("colour", rgb):
+    out = img*m + bg*(1-m) (CLAUDE.md 背景合成)."""
+    H, W = img.shape[1:]
+    m = sample_mask(mask, W, H)
+    if effect[0] == "blur":
+        planes = np.concatenate([img * (1 - m), (1 - m)[None]])
+        taps = gaussian_taps(effect[1])
+        planes = blur_axis(blur_axis(planes, taps, 2), taps, 1)
+        den = planes[3]
+        bg = np.where(den > 1e-6, planes[:3] / np.where(den > 1e-6, den, 1), img)
+    else:
+        bg = np.asarray(effect[1], np.float64)[:, None, None] * np.ones_like(img)
+    return img * m + bg * (1 - m)
+
+
+BG_EFFECTS = [("bg_blur", ("blur", 4.5)), ("bg_colour", ("colour", (0.0, 177 / 255, 64 / 255)))]
 
 
 def crop_weights(in_size, out_size, origin, length):
@@ -379,12 +476,42 @@ def generate(dest: Path):
              note="premultiplied sRGB RGBA8: clear / ramp / opaque")
     for name, origin in OVERLAY_CASES:
         m.tensor(name, overlay(sources["demo_resized256"], rgba, origin), f"overlay_rgba over demo_resized256 at {origin}")
+    # background: a 160x90 graded-like picture, a smooth 40x30 blob mask
+    img = F.interpolate(tensors["gym_b"][0], size=(90, 160), mode="bilinear", align_corners=False)
+    m.tensor("bg_image", img, "gym_b at 160x90")
+    yy, xx = np.mgrid[0:30, 0:40]
+    blob = np.sqrt(np.clip(1 - ((xx - 21) / 11.0) ** 2 - ((yy - 13) / 13.0) ** 2, 0, 1)).astype(np.float32)
+    m.tensor("bg_mask", torch.from_numpy(blob), "40x30 person-like mask in [0, 1]")
+    for name, effect in BG_EFFECTS:
+        out = background(img[0].double().numpy(), blob.astype(np.float64), effect)
+        m.tensor(name, torch.from_numpy(out)[None], f"bg_image with bg_mask, {effect}")
+    rng = np.random.default_rng(3)
+    masks = np.stack([np.clip(blob * 255 + rng.normal(0, 30, blob.shape), 0, 255)
+                      for _ in range(5)]).astype(np.uint8)
+    masks = np.repeat(np.repeat(masks, 3, 1), 3, 2)         # 120x90: a feather wide enough to have taps
+    (dest / "bg_masks.u8").write_bytes(masks.tobytes())
+    m.record("bg_masks", dest / "bg_masks.u8", file="bg_masks.u8", dtype="uint8", shape=list(masks.shape),
+             note="5 noisy 120x90 person masks")
+    m.tensor("bg_combined", torch.from_numpy(combine_masks(masks, 640, 360)), "mean + feather, frame 640x360")
+    clean, noisy = dest / "synthetic_clean.mp4", dest / "synthetic_noisy.mp4"
+    make_noise_pair(clean, noisy)
+    m.record("synthetic_clean.mp4", clean, file=clean.name, dtype="h264", shape=[20, 180, 320],
+             note="gradients + moving disk, crf 6")
+    m.record("synthetic_noisy.mp4", noisy, file=noisy.name, dtype="h264", shape=[20, 180, 320],
+             note="synthetic_clean + temporal noise alls=14 seed 11, crf 6")
+    person = dest / "synthetic_person.mp4"
+    make_person(person, dest / "gym_b_in.png", dest / "comic_in.png")
+    m.record("synthetic_person.mp4", person, file=person.name, dtype="h264", shape=[24, 180, 320],
+             note="gym_b face panning 12 frames | comic 12 frames")
     srt = dest / "subtitles_sample.srt"
     srt.write_bytes(SUBTITLE_SAMPLE.encode("utf-8"))
     m.record("subtitles_sample.srt", srt, file=srt.name, dtype="text", shape=[], note="BOM, CRLF and LF, missing number, bad block, overlap")
 
     m.write(generator="research/make_fixtures.py", crop_cases=crops,
-            overlay_cases=[{"name": n, "origin": list(o)} for n, o in OVERLAY_CASES], upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
+            overlay_cases=[{"name": n, "origin": list(o)} for n, o in OVERLAY_CASES],
+            background_cases=[{"name": n, "effect": e[0], "sigma": e[1] if e[0] == "blur" else 0,
+                               "colour": list(e[1]) if e[0] == "colour" else [0, 0, 0]} for n, e in BG_EFFECTS],
+            upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
             torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times)
     print(f"synthetic shots: {expected}")
 
