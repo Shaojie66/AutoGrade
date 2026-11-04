@@ -19,6 +19,7 @@ struct Summary: Sendable {
     let styles: [String]
     let hasAudio: Bool
     let reframe: ReframeInfo?
+    let subtitles: [SubtitleCue]
     let shotSeconds: [Double]
     let frameCount: Int
     let frameRate: Double     // frames / duration, for the transport's step size only
@@ -67,6 +68,10 @@ actor Engine {
     private var cropOverrides: [Float?] = []
     private var path: CropPath?
     private var reframeSlots: [ReframeTargets] = []
+    // subtitles (CLAUDE.md 字幕): edited here; burns are per output size and rebuilt on any edit
+    private var cues: [SubtitleCue] = []
+    private var showSubtitles = false
+    private var burns: [String: SubtitleBurn] = [:]
     private var finals: [LUT3D] = []
     /// Three slots so the slot being drawn is never the one being written.
     private var previewSlots: [PreviewTargets] = []
@@ -104,6 +109,8 @@ actor Engine {
         path = nil
         reframeSlots = []
         cropOverrides = Array(repeating: nil, count: result.shots.count)
+        cues = []
+        burns = [:]
         previewSlots = try (0..<3).map { _ in
             try PreviewTargets(kernels: core.kernels, width: result.info.width, height: result.info.height)
         }
@@ -197,6 +204,98 @@ actor Engine {
         return summary()
     }
 
+    // MARK: subtitles
+
+    enum SubtitleError: Error, CustomStringConvertible {
+        case needsMacOS26, unsupported(String), recognition(String)
+        var description: String {
+            switch self {
+            case .needsMacOS26: "speech recognition needs macOS 26 or later"
+            case .unsupported(let l): "\(l) is not supported"
+            case .recognition(let e): e
+            }
+        }
+    }
+
+    /// Recognise the video's speech in `language` and split it into cues for the current frame.
+    /// A failure is reported as `.recognition`, so the interface can offer the model download.
+    func transcribe(language: String, progress: @escaping @Sendable (Double) -> Void) throws -> Summary {
+        guard let source, let a = analysis else { return try noVideo() }
+        guard #available(macOS 26.0, *) else { throw SubtitleError.needsMacOS26 }
+        guard let locale = try Transcriber.locale(for: language) else { throw SubtitleError.unsupported(language) }
+        let token = control.begin()
+        defer { control.end(token) }
+        let tokens: [SubtitleToken]
+        do {
+            tokens = try Transcriber.transcribe(source, locale: locale, cancel: token, progress: progress)
+        } catch is Cancelled {
+            throw Cancelled()
+        } catch {
+            throw SubtitleError.recognition("\(error)")
+        }
+        cues = Subtitles.cues(tokens: tokens, cuts: a.shots.dropFirst().map { a.frameTimes[$0.first].seconds },
+                              frameSeconds: a.info.duration.seconds / Double(max(a.frameCount, 1)),
+                              script: SubtitleScript(language: locale.identifier), vertical: aspect == .vertical9x16)
+        burns = [:]
+        showSubtitles = true
+        return summary()
+    }
+
+    /// Download a language's system speech model; only after the user agreed (CLAUDE.md 字幕).
+    func downloadSpeechModel(language: String, progress: @escaping @Sendable (Double) -> Void) throws {
+        guard #available(macOS 26.0, *) else { throw SubtitleError.needsMacOS26 }
+        guard let locale = try Transcriber.locale(for: language) else { throw SubtitleError.unsupported(language) }
+        try Transcriber.downloadModel(locale, progress: progress)
+    }
+
+    nonisolated static func speechLanguages() -> [String] {
+        guard #available(macOS 26.0, *) else { return [] }
+        return (try? Transcriber.supportedLanguages()) ?? []
+    }
+
+    func importSubtitles(_ url: URL) throws -> (Summary, [String]) {
+        let parsed = Subtitles.parseSRT(try String(contentsOf: url, encoding: .utf8))
+        cues = parsed.cues
+        burns = [:]
+        showSubtitles = true
+        return (summary(), parsed.warnings)
+    }
+
+    func setCueText(_ text: String, cue k: Int) -> Summary? {
+        guard k < cues.count else { return nil }
+        cues[k].lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        burns = [:]
+        return summary()
+    }
+
+    func deleteCue(_ k: Int) -> Summary? {
+        guard k < cues.count else { return nil }
+        cues.remove(at: k)
+        burns = [:]
+        return summary()
+    }
+
+    func clearSubtitles() -> Summary? {
+        guard analysis != nil else { return nil }
+        cues = []
+        burns = [:]
+        return summary()
+    }
+
+    func setShowSubtitles(_ on: Bool) { showSubtitles = on }
+
+    func subtitlesText() -> String { Subtitles.srt(cues) }
+
+    /// The burn for a `width` x `height` picture, made once per edit.
+    private func burn(_ width: Int, _ height: Int) -> SubtitleBurn? {
+        guard !cues.isEmpty else { return nil }
+        let key = "\(width)x\(height)"
+        if let b = burns[key] { return b }
+        let b = SubtitleBurn(cues: cues, width: width, height: height, kernels: core.kernels)
+        burns[key] = b
+        return b
+    }
+
     private func rebuildPath() {
         guard let a = analysis, let aspect, let track else { path = nil; return }
         path = Reframe.path(track: track, shots: a.shots, frameTimes: a.frameTimes, width: a.info.width,
@@ -222,6 +321,7 @@ actor Engine {
                                        length: SIMD2(Double(p.length.x) / Double(a.info.width), Double(p.length.y) / Double(a.info.height)),
                                        centers: p.centers, modes: p.modes)
                        },
+                       subtitles: cues,
                        shotSeconds: seconds,
                        frameCount: a.frameCount, frameRate: Double(a.frameCount) / duration, warnings: a.warnings)
     }
@@ -242,12 +342,13 @@ actor Engine {
         if output, let path, !reframeSlots.isEmpty {
             let slot = reframeSlots[nextSlot % reframeSlots.count]
             nextSlot = (nextSlot + 1) % 3
-            try core.previewReframed(decoded, lut: lut, path: path, into: slot)
+            let (w, h) = path.outputSize
+            try core.previewReframed(decoded, lut: lut, path: path, into: slot, subtitles: showSubtitles ? burn(w, h) : nil)
             return DisplayFrame(index: decoded.index, original: slot.output, graded: slot.output)
         }
         let slot = previewSlots[nextSlot]
         nextSlot = (nextSlot + 1) % previewSlots.count
-        try core.preview(decoded, lut: lut, into: slot)
+        try core.preview(decoded, lut: lut, into: slot, subtitles: showSubtitles ? burn(a.info.width, a.info.height) : nil)
         return DisplayFrame(index: decoded.index, original: slot.original, graded: slot.graded)
     }
 
@@ -321,7 +422,7 @@ actor Engine {
     /// file is the caller's decision, taken in the save panel; here it means:
     /// write a temp file beside it, then swap it in, so a failed export never
     /// destroys the old one. A failed check keeps the file; the report says why.
-    func export(to output: URL, codec: OutputCodec, audio: Bool, cubes: URL?,
+    func export(to output: URL, codec: OutputCodec, audio: Bool, cubes: URL?, burnSubtitles: Bool, srt: URL?,
                 progress: @escaping @Sendable (Double) -> Void,
                 checking: @escaping @Sendable () -> Void) throws -> ExportReport {
         guard let source, let a = analysis else { throw VideoError.reader("no video is open") }
@@ -332,14 +433,18 @@ actor Engine {
         let target = replacing
             ? output.deletingLastPathComponent().appendingPathComponent(".autograde-\(UUID().uuidString).mov")
             : output
+        let size = path?.outputSize ?? (a.info.width, a.info.height)
         let rendered = try core.render(source, analysis: a, luts: finals, to: target, codec: codec, audio: audio,
-                                       reframe: path, cancel: token) { i in
+                                       reframe: path, subtitles: burnSubtitles ? burn(size.0, size.1) : nil, cancel: token) { i in
             progress(Double(i + 1) / Double(a.frameCount))
         }
         checking()
         var report = try core.checkExport(target, source: source, analysis: a, luts: finals, render: rendered)
         report.warnings = rendered.warnings
         if replacing { _ = try fm.replaceItemAt(output, withItemAt: target) }
+        if let srt, !cues.isEmpty {   // replacing an existing one was confirmed in the interface
+            try Subtitles.srt(cues).write(to: srt, atomically: true, encoding: .utf8)
+        }
 
         if let cubes {
             let prefix = source.deletingPathExtension().lastPathComponent

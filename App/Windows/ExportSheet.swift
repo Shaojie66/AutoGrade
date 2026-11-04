@@ -19,6 +19,10 @@ struct ExportSheet: View {
                 Text(L(S.exportFrame(name, size.0, size.1))).font(.callout).foregroundStyle(.secondary)
             }
             Toggle(L(S.alsoCubes), isOn: $project.exportCubes)
+            Toggle(L(S.exportSRT), isOn: project.subtitles.isEmpty ? .constant(false) : $project.exportSRT)
+                .disabled(project.subtitles.isEmpty)
+            Toggle(L(S.burnSubtitlesOption), isOn: project.subtitles.isEmpty ? .constant(false) : $project.burnSubtitles)
+                .disabled(project.subtitles.isEmpty)
             // No audio track: shown unticked as well as disabled, so it never looks like audio will be kept.
             Toggle(L(S.keepAudio), isOn: (project.summary?.hasAudio ?? false) ? $project.exportAudio : .constant(false))
                 .disabled(!(project.summary?.hasAudio ?? false))

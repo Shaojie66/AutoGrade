@@ -20,6 +20,8 @@ public struct ExportReport: Sendable {
     public var frames: [Frame] = []
     public var videoSamples = 0
     public var audioPackets: Int?
+    /// Burnt-in subtitles: share of the subtitle band's pixels far off, per sampled frame.
+    public var subtitleBands: [Double] = []
     /// Decoded audio: largest sample difference, and (source, export) length in frames.
     public var audioMaxDiff: Float?
     public var audioFrames: (source: Int, export: Int)?
@@ -35,8 +37,26 @@ public enum ExportCheck {
     /// on the owner's clips; one shot ungraded by mistake: mean 12.1 / bias -12.4.
     public static let maxMeanAbs = 4.0
     public static let maxBias = 3.0
+    /// Subtitle band: the share of pixels off by more than `subtitleFarLevels` (text vs
+    /// no text differs by ~200 levels; codec noise rarely by 64). Measured: see CLAUDE.md 容差表.
+    public static let subtitleFarLevels = 64
+    public static let maxSubtitleFarFraction = 0.01
     /// Decoded audio, export vs source (CLAUDE.md 容差表; measured 1.5e-7 on the owner's gym clip).
     public static let maxAudioDiff: Float = 1e-6
+
+    /// Rows where a subtitle can sit in a `width` x `height` output (SubtitleRenderer's
+    /// placement, two lines plus margins), for the per-frame subtitle comparison.
+    static func subtitleBand(width w: Int, height h: Int) -> Range<Int> {
+        let vertical = h > w
+        let size = Double(vertical ? w : h) * Double(SubtitleRenderer.sizeFraction)
+        let span = Int((size * 3.2).rounded(.up))                     // two lines + stroke, shadow, padding
+        if vertical {
+            let c = Int((Double(h) * Double(SubtitleRenderer.verticalCentre)).rounded())
+            return max(c - span / 2, 0)..<min(c + span / 2, h)
+        }
+        let bottom = h - Int((Double(h) * Double(SubtitleRenderer.bottomMargin)).rounded())
+        return max(bottom - span, 0)..<bottom
+    }
 
     /// The shots whose middle frames are sampled.
     static func sampledShots(_ count: Int) -> [Int] {
@@ -134,10 +154,10 @@ extension AutoGrader {
             let sourceFrame = try decodeFrame(source, analysis: analysis, index: index)
             let texture: MTLTexture
             if let path = render.reframe, let reframed {
-                try previewReframed(sourceFrame, lut: luts[k], path: path, into: reframed)
+                try previewReframed(sourceFrame, lut: luts[k], path: path, into: reframed, subtitles: render.subtitles)
                 texture = reframed.output
             } else {
-                try preview(sourceFrame, lut: luts[k], into: targets)
+                try preview(sourceFrame, lut: luts[k], into: targets, subtitles: render.subtitles)
                 texture = targets.graded
             }
             var expected = [UInt8](repeating: 0, count: w * h * 4)
@@ -162,6 +182,29 @@ extension AutoGrader {
             let frame = ExportReport.Frame(frame: index, shot: k, meanAbs: sumAbs / Double(3 * n),
                                            bias: bias.map { $0 / Double(n) })
             report.frames.append(frame)
+            // Subtitles are a small part of the frame: a missing or wrong cue hardly moves the
+            // whole-frame mean, so the band where any subtitle would sit is compared on its own.
+            if render.subtitles != nil {
+                let band = ExportCheck.subtitleBand(width: w, height: h)
+                var far = 0, count = 0
+                for y in band.lowerBound..<band.upperBound {
+                    for x in 0..<w {
+                        let i = y * w + x
+                        let d = [(0, 2), (1, 1), (2, 0)].map { c, byte in
+                            abs(Int(quantize8(rgb[c * n + i])) - Int(expected[i * 4 + byte]))
+                        }.max()!
+                        if d > ExportCheck.subtitleFarLevels { far += 1 }
+                        count += 1
+                    }
+                }
+                let fraction = Double(far) / Double(max(count, 1))
+                report.subtitleBands.append(fraction)
+                if fraction > ExportCheck.maxSubtitleFarFraction {
+                    report.failures.append(String(format: "shot %d (frame %d): the subtitle area does not match "
+                                                  + "(%.2f%% of its pixels off by more than %d levels)", k + 1, index,
+                                                  100 * fraction, ExportCheck.subtitleFarLevels))
+                }
+            }
             if frame.meanAbs > ExportCheck.maxMeanAbs || frame.bias.contains(where: { abs($0) > ExportCheck.maxBias }) {
                 report.failures.append(String(format: "shot %d (frame %d) does not match its grade: mean %.2f levels, "
                                               + "bias R %+.2f G %+.2f B %+.2f", k + 1, index, frame.meanAbs,

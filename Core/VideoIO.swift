@@ -333,5 +333,6 @@ public final class CancelToken: Sendable {
 }
 
 public struct Cancelled: Error, CustomStringConvertible {
+    public init() {}
     public var description: String { "cancelled" }
 }

@@ -55,6 +55,33 @@ enum S {
         en: "Film styles are installed on this Mac only and are not distributed. FiveK weights: research use only, non-commercial; film styles are also under CC BY-SA 4.0.",
         zh: "胶片风格只安装在这台 Mac 上，不对外分发。FiveK 权重仅限研究、不得商用；胶片风格另受 CC BY-SA 4.0 约束。")
 
+    // subtitles
+    static let subtitlesMenu = Copy(en: "Subtitles", zh: "字幕")
+    static let generateSubtitles = Copy(en: "Generate Subtitles", zh: "生成字幕")
+    static let importSRT = Copy(en: "Import SRT…", zh: "导入 SRT…")
+    static let showSubtitles = Copy(en: "Show Subtitles", zh: "显示字幕")
+    static let clearSubtitles = Copy(en: "Clear Subtitles", zh: "清除字幕")
+    static let recognising = Copy(en: "Recognising speech", zh: "正在识别语音")
+    static let downloadingModel = Copy(en: "Downloading the speech model", zh: "正在下载语音模型")
+    static let subtitlesFailed = Copy(en: "Couldn’t make subtitles", zh: "无法生成字幕")
+    static let subtitlesImported = Copy(en: "Subtitles imported with warnings", zh: "字幕已导入，但有警告")
+    static let speechModelTitle = Copy(en: "Download the speech model?", zh: "下载语音模型？")
+    static func speechModelBody(_ language: String, _ why: String) -> Copy {
+        Copy(en: "Recognition failed (\(why)). If the \(language) speech model is not on this Mac yet, it can be downloaded from Apple. The system manages it, other apps can share it, and recognition then works offline.",
+             zh: "识别失败（\(why)）。如果这台 Mac 上还没有“\(language)”的语音模型，可以从 Apple 下载。模型由系统管理、可与其他应用共用，下载后可离线识别。")
+    }
+    static let download = Copy(en: "Download", zh: "下载")
+    static let noSubtitles = Copy(en: "No subtitles yet. Generate them or import an SRT from the Subtitles menu.",
+                                  zh: "还没有字幕。可在“字幕”菜单里生成，或导入 SRT。")
+    static let deleteCue = Copy(en: "Delete", zh: "删除")
+    static let sidebarShots = Copy(en: "Shots", zh: "镜头")
+    static let sidebarSubtitles = Copy(en: "Subtitles", zh: "字幕")
+    static let exportSRT = Copy(en: "Also write an SRT file", zh: "同时导出 SRT 文件")
+    static let burnSubtitlesOption = Copy(en: "Burn subtitles into the picture", zh: "把字幕烧录进画面")
+    static func replaceSRTTitle(_ name: String) -> Copy { Copy(en: "Replace \(name)?", zh: "替换 \(name)？") }
+    static let subtitlesNeedMac26 = Copy(en: "Recognising speech needs macOS 26 or later. You can still import an SRT.",
+                                         zh: "识别语音需要 macOS 26 或更高版本，仍可导入 SRT。")
+
     // reframe
     static let aspect = Copy(en: "Frame", zh: "画幅")
     static let aspectOriginal = Copy(en: "Original", zh: "原始")

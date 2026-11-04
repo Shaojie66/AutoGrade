@@ -1,0 +1,135 @@
+import CoreGraphics
+import CoreText
+import Foundation
+
+/// Rasterises a cue with CoreText (CLAUDE.md 字幕): white text, black stroke
+/// (8% of the font size), a soft shadow, premultiplied sRGB RGBA8, placed for
+/// the output frame. Drawn once per cue; `SubtitleBurn` caches the result.
+public enum SubtitleRenderer {
+    public static let fontName = "PingFangSC-Semibold"
+    public static let sizeFraction: CGFloat = 0.055         // of height (wide frames) or width (vertical)
+    public static let bottomMargin: CGFloat = 0.08          // wide frames: bottom edge above the frame's
+    public static let verticalCentre: CGFloat = 0.70        // 9:16: centre, clear of the platforms' UI
+    public static let maxWidthFraction: CGFloat = 0.85
+    static let strokePercent: CGFloat = 8
+    static let lineSpacing: CGFloat = 1.25
+
+    public struct Raster: Sendable {
+        public let rgba: [UInt8]
+        public let width: Int
+        public let height: Int
+        public let origin: SIMD2<Int32>        // top-left in the output frame
+        public let fontSize: CGFloat
+    }
+
+    /// `vertical`: a 9:16 output (taller than wide).
+    public static func render(_ lines: [String], frameWidth w: Int, frameHeight h: Int) -> Raster? {
+        let text = lines.filter { !$0.isEmpty }
+        guard !text.isEmpty, w > 0, h > 0 else { return nil }
+        let vertical = h > w
+        var size = (vertical ? CGFloat(w) : CGFloat(h)) * sizeFraction
+        var built = layout(text, size: size)
+        let maxWidth = CGFloat(w) * maxWidthFraction
+        if built.width > maxWidth {                               // too wide: shrink to fit
+            size *= maxWidth / built.width
+            built = layout(text, size: size)
+        }
+        let pad = Int((size * strokePercent / 100 + size * 0.12).rounded(.up)) + 2
+        let lineHeight = size * lineSpacing
+        let bw = Int(built.width.rounded(.up)) + 2 * pad, bh = Int((lineHeight * CGFloat(text.count)).rounded(.up)) + 2 * pad
+        var rgba = [UInt8](repeating: 0, count: bw * bh * 4)
+        let drawn: Bool = rgba.withUnsafeMutableBytes { raw in
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let ctx = CGContext(data: raw.baseAddress, width: bw, height: bh, bitsPerComponent: 8, bytesPerRow: bw * 4,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                                          | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            // Two passes: the black stroke (with the shadow) first, the white fill on top, so
+            // the outline only shows outside the glyphs. One fill-and-stroke pass centres the
+            // stroke on the outline and its inner half covered thin CJK strokes black
+            // (2026-11-04: black text with a white rim).
+            for pass in [built.strokes, built.fills] {
+                ctx.saveGState()
+                if pass == built.strokes {
+                    ctx.setShadow(offset: CGSize(width: 0, height: -size * 0.04), blur: size * 0.12,
+                                  color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.5))
+                }
+                for (i, line) in pass.enumerated() {
+                    let lw = CTLineGetTypographicBounds(built.fills[i], nil, nil, nil)
+                    let x = (CGFloat(bw) - lw) / 2
+                    // CoreGraphics is bottom-up: line i sits i lines below the top
+                    let baseline = CGFloat(bh) - CGFloat(pad) - lineHeight * CGFloat(i) - built.ascent - (lineHeight - built.ascent - built.descent) / 2
+                    ctx.textPosition = CGPoint(x: x, y: baseline)
+                    CTLineDraw(line, ctx)
+                }
+                ctx.restoreGState()
+            }
+            return true
+        }
+        guard drawn else { return nil }
+        let x = (w - bw) / 2
+        let y = vertical ? Int((CGFloat(h) * verticalCentre).rounded()) - bh / 2
+                         : h - Int((CGFloat(h) * bottomMargin).rounded()) - bh
+        return Raster(rgba: rgba, width: bw, height: bh, origin: SIMD2(Int32(x), Int32(y)), fontSize: size)
+    }
+
+    struct Layout {
+        let fills: [CTLine]          // white, no stroke
+        let strokes: [CTLine]        // black stroke only, twice the visible outline
+        let width: CGFloat
+        let ascent: CGFloat
+        let descent: CGFloat
+    }
+
+    static func layout(_ text: [String], size: CGFloat) -> Layout {
+        let font = CTFontCreateWithName(fontName as CFString, size, nil)
+        let fill: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1),
+        ]
+        // positive width: stroke only, centred on the outline, so half of it shows outside
+        let stroke: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTStrokeColorAttributeName as String): CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1),
+            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): 2 * strokePercent,
+        ]
+        let fills = text.map { CTLineCreateWithAttributedString(NSAttributedString(string: $0, attributes: fill)) }
+        let strokes = text.map { CTLineCreateWithAttributedString(NSAttributedString(string: $0, attributes: stroke)) }
+        let width = fills.map { CGFloat(CTLineGetTypographicBounds($0, nil, nil, nil)) }.max() ?? 0
+        return Layout(fills: fills, strokes: strokes, width: width + size * strokePercent / 100,
+                      ascent: CTFontGetAscent(font), descent: CTFontGetDescent(font))
+    }
+}
+
+/// The cues to burn into one export (or preview) at one output size, each
+/// rasterised once and kept on the GPU (CLAUDE.md 字幕).
+public final class SubtitleBurn: @unchecked Sendable {
+    public let cues: [SubtitleCue]
+    public let width: Int
+    public let height: Int
+    private let kernels: GradeKernels
+    private var cache: [Int: (OverlayImage, SIMD2<Int32>)?] = [:]
+    private let lock = NSLock()
+
+    public init(cues: [SubtitleCue], width: Int, height: Int, kernels: GradeKernels) {
+        self.cues = cues
+        self.width = width
+        self.height = height
+        self.kernels = kernels
+    }
+
+    /// The index of the cue on screen at `seconds`, if any.
+    public func cueIndex(at seconds: Double) -> Int? { Subtitles.cue(at: seconds, in: cues) }
+
+    /// The rasterised cue on screen at `seconds` and its top-left, if any.
+    public func overlay(at seconds: Double) throws -> (OverlayImage, SIMD2<Int32>)? {
+        guard let k = cueIndex(at: seconds) else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        if let hit = cache[k] { return hit }
+        let made = try SubtitleRenderer.render(cues[k].lines, frameWidth: width, frameHeight: height).map {
+            (try kernels.makeOverlay(rgba: $0.rgba, width: $0.width, height: $0.height), $0.origin)
+        }
+        cache[k] = made
+        return made
+    }
+}

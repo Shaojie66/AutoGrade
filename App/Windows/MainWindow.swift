@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct MainWindow: View {
     @Bindable var project: Project
     @State private var dropTargeted = false
+    @State private var sidebar = 0               // 0 shots, 1 subtitles
 
     var body: some View {
         content
@@ -14,6 +15,27 @@ struct MainWindow: View {
                     Button { project.openPanel() } label: { Label(L(S.open), systemImage: "folder") }
                     Button { project.reanalyze() } label: { Label(L(S.reanalyze), systemImage: "arrow.clockwise") }
                         .disabled(!project.canEdit)
+                    Menu {
+                        if !project.speechLanguages.isEmpty {
+                            Menu(L(S.generateSubtitles)) {
+                                ForEach(menuLanguages, id: \.self) { id in
+                                    Button(project.languageName(id)) { project.generateSubtitles(language: id) }
+                                }
+                            }
+                        } else {
+                            Text(L(S.subtitlesNeedMac26))
+                        }
+                        Button(L(S.importSRT)) { project.importSubtitles() }
+                        Divider()
+                        Toggle(L(S.showSubtitles), isOn: Binding(get: { project.showSubtitles }, set: { project.setShowSubtitles($0) }))
+                            .disabled(project.subtitles.isEmpty)
+                        Button(L(S.clearSubtitles)) { project.clearSubtitles() }
+                            .disabled(project.subtitles.isEmpty)
+                    } label: {
+                        Label(L(S.subtitlesMenu), systemImage: "captions.bubble")
+                    }
+                    .disabled(!project.canEdit)
+                    .accessibilityLabel(L(S.subtitlesMenu))
                     Menu {
                         Picker(L(S.aspect), selection: Binding(get: { project.reframe?.aspect },
                                                                set: { project.setAspect($0) })) {
@@ -59,6 +81,12 @@ struct MainWindow: View {
             }
     }
 
+    /// Mandarin first (the default, CLAUDE.md 字幕), then the rest as the system lists them.
+    private var menuLanguages: [String] {
+        let first = ["zh_CN", "en_US"].filter(project.speechLanguages.contains)
+        return first + project.speechLanguages.filter { !first.contains($0) }
+    }
+
     @ViewBuilder private var content: some View {
         switch project.phase {
         case .empty:
@@ -79,7 +107,17 @@ struct MainWindow: View {
 
     private var editor: some View {
         NavigationSplitView {
-            ShotList(project: project).navigationSplitViewColumnWidth(min: 240, ideal: 280)
+            VStack(spacing: 0) {
+                Picker("", selection: $sidebar) {
+                    Text(L(S.sidebarShots)).tag(0)
+                    Text(L(S.sidebarSubtitles)).tag(1)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(8)
+                if sidebar == 0 { ShotList(project: project) } else { SubtitleList(project: project) }
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {
             VStack(spacing: 0) {
                 ZStack {

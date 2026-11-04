@@ -4,7 +4,10 @@ import Foundation
 
 let usage = """
 usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut 0.25] [--size 65] [--codec hevc|prores] [--no-audio] [--reframe 9:16|16:9]
+                 [--subtitles srt|burn|both] [--subtitle-lang zh-CN] [--subtitle-file in.srt]
        autograde --list-styles
+       autograde --list-languages
+       autograde --download-speech-model zh-CN
 
   Grades every shot of <input> with AdaInt and writes <output.mov>.
   --style      style id (default fivek, the built-in FiveK sRGB weights); others are
@@ -16,6 +19,10 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
   --codec      output codec (default hevc)
   --no-audio   do not copy the source's audio track (copied as it is by default)
   --reframe    crop to 9:16 (1080x1920) or 16:9 (1920x1080), following the subject
+  --subtitles  srt: write <output>.srt; burn: draw them into the picture; both (macOS 26+ to recognise)
+  --subtitle-lang  recognition language (default zh-CN); see --list-languages
+  --subtitle-file  use this SRT instead of recognising speech
+  --download-speech-model LANG  download that language's system speech model (network; needed once)
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
@@ -34,6 +41,9 @@ struct Options {
     var audio = true
     var reframe: Aspect?
     var reframeCSV: URL?
+    var subtitles: String?        // srt | burn | both
+    var subtitleLang = "zh-CN"
+    var subtitleFile: URL?
 }
 
 func fail(_ message: String) -> Never {
@@ -52,6 +62,7 @@ func parse(_ args: [String]) -> Options {
     var audio = true
     var reframe: Aspect?
     var reframeCSV: URL?
+    var subtitles: String?, subtitleLang = "zh-CN", subtitleFile: URL?
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -68,6 +79,14 @@ func parse(_ args: [String]) -> Options {
         case "--no-audio": audio = false
         case "--reframe": reframe = convert(value(arg), Aspect.init(rawValue:), "--reframe is 9:16 or 16:9")
         case "--reframe-csv": reframeCSV = URL(fileURLWithPath: value(arg))
+        case "--subtitles":
+            let v = value(arg)
+            guard ["srt", "burn", "both"].contains(v) else { fail("--subtitles is srt, burn or both") }
+            subtitles = v
+        case "--subtitle-lang": subtitleLang = value(arg)
+        case "--subtitle-file": subtitleFile = URL(fileURLWithPath: value(arg))
+        case "--list-languages": listLanguages(); exit(0)
+        case "--download-speech-model": downloadModel(value(arg)); exit(0)
         case "--list-styles": listStyles(); exit(0)
         case "-h", "--help": print(usage); exit(0)
         default:
@@ -78,7 +97,33 @@ func parse(_ args: [String]) -> Options {
     guard let input, let output else { fail(usage) }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
     return Options(input: input, output: output, cubeDir: cubeDir, cut: cut, size: size, codec: codec, style: style, audio: audio, reframe: reframe,
-                   reframeCSV: reframeCSV)
+                   reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile)
+}
+
+func listLanguages() {
+    guard #available(macOS 26.0, *) else { fail("speech recognition needs macOS 26 or later") }
+    do {
+        for id in try Transcriber.supportedLanguages() {
+            let state = try Transcriber.locale(for: id).map { try Transcriber.modelState($0).rawValue } ?? "unsupported"
+            print("  \(id.padding(toLength: 8, withPad: " ", startingAt: 0)) \(state)")
+        }
+    } catch {
+        fail("\(error)")
+    }
+}
+
+func downloadModel(_ identifier: String) {
+    guard #available(macOS 26.0, *) else { fail("speech recognition needs macOS 26 or later") }
+    do {
+        guard let locale = try Transcriber.locale(for: identifier) else { fail("\(identifier) is not supported; see --list-languages") }
+        let before = try Transcriber.modelState(locale)
+        print("\(locale.identifier): \(before.rawValue)")
+        guard before == .needsDownload else { return }
+        try Transcriber.downloadModel(locale) { p in print(String(format: "  downloading %.0f%%", p * 100)) }
+        print("\(locale.identifier): \(try Transcriber.modelState(locale).rawValue)")
+    } catch {
+        fail("\(error)")
+    }
 }
 
 func listStyles() {
@@ -138,8 +183,47 @@ do {
             try text.write(to: csv, atomically: true, encoding: .utf8)
         }
     }
+    // subtitles (CLAUDE.md 字幕): an SRT given, or recognised on this Mac
+    var cues: [SubtitleCue]?
+    if let mode = options.subtitles {
+        if let file = options.subtitleFile {
+            let parsed = Subtitles.parseSRT(try String(contentsOf: file, encoding: .utf8))
+            for w in parsed.warnings { print("warning: \(file.lastPathComponent): \(w)") }
+            cues = parsed.cues
+            print("subtitles: \(parsed.cues.count) cues from \(file.lastPathComponent)")
+        } else {
+            guard #available(macOS 26.0, *) else { fail("recognising speech needs macOS 26 or later; use --subtitle-file") }
+            guard let locale = try Transcriber.locale(for: options.subtitleLang) else {
+                fail("\(options.subtitleLang) is not supported; see --list-languages")
+            }
+            let start = CFAbsoluteTimeGetCurrent()
+            let tokens: [SubtitleToken]
+            do {
+                tokens = try Transcriber.transcribe(options.input, locale: locale)
+            } catch {
+                fail("speech recognition failed (\(error)); if the model is missing: autograde --download-speech-model \(options.subtitleLang)")
+            }
+            let frameSeconds = info.duration.seconds / Double(max(analysis.frameCount, 1))
+            let made = Subtitles.cues(tokens: tokens, cuts: analysis.shots.dropFirst().map { analysis.frameTimes[$0.first].seconds },
+                                      frameSeconds: frameSeconds, script: SubtitleScript(language: locale.identifier),
+                                      vertical: options.reframe == .vertical9x16)
+            cues = made
+            print(String(format: "subtitles: %@, %d tokens -> %d cues in %.2f s", locale.identifier, tokens.count, made.count,
+                         CFAbsoluteTimeGetCurrent() - start))
+        }
+        if mode != "burn", let cues {
+            let srt = options.output.deletingPathExtension().appendingPathExtension("srt")
+            if FileManager.default.fileExists(atPath: srt.path) { fail("\(srt.path) already exists (refusing to overwrite)") }
+            try Subtitles.srt(cues).write(to: srt, atomically: true, encoding: .utf8)
+            print("wrote \(srt.path)")
+        }
+    }
+    let outSize = path?.outputSize ?? (info.width, info.height)
+    let burn = (options.subtitles == "burn" || options.subtitles == "both") ? cues.map {
+        SubtitleBurn(cues: $0, width: outSize.0, height: outSize.1, kernels: engine.kernels)
+    } : nil
     let result = try engine.render(options.input, analysis: analysis, luts: analysis.luts, to: options.output,
-                                   codec: options.codec, audio: options.audio, reframe: path)
+                                   codec: options.codec, audio: options.audio, reframe: path, subtitles: burn)
     let r = result.times
     for warning in result.warnings { print("warning: \(warning)") }
     print("render:  decode \(ms(r.decode, r.frames)), yuv→rgb \(ms(r.convert, r.frames)), apply+bgra \(ms(r.apply, r.frames)), "
@@ -157,6 +241,9 @@ do {
     print(String(format: "check:   %d video samples, %@, %.2f s — %@", report.videoSamples,
                  report.audioPackets.map { "\($0) audio packets" } ?? "no audio", report.seconds,
                  report.passed ? "passed" : "FAILED"))
+    if !report.subtitleBands.isEmpty {
+        print("check:   subtitle band, share far off: " + report.subtitleBands.map { String(format: "%.4f", $0) }.joined(separator: " "))
+    }
     for failure in report.failures { print("check failed: \(failure)") }
     if let dir = options.cubeDir {
         let prefix = options.input.deletingPathExtension().lastPathComponent

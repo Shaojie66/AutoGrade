@@ -1,0 +1,15 @@
+﻿1
+00:00:01,000 --> 00:00:02,500
+你好
+
+00:00:03.000 --> 00:00:04.000
+no number, dot separator
+second line
+
+7
+not a time line
+broken
+
+9
+00:00:03,500 --> 00:00:05,000
+overlaps

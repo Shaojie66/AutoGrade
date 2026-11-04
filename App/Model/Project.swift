@@ -61,6 +61,8 @@ final class Project {
     var exportCodec: OutputCodec = .hevc
     var exportCubes = false
     var exportAudio = true                       // copy the source's audio track (CLAUDE.md 导出)
+    var exportSRT = true                         // write <name>.srt beside the video when there are subtitles
+    var burnSubtitles = false                    // draw the subtitles into the picture
     private(set) var exportProgress: Double?
     private(set) var exportChecking = false      // the check after writing is running
     private(set) var lastExport: URL?
@@ -217,6 +219,104 @@ final class Project {
     }
 
     // MARK: strength
+
+    // MARK: subtitles (CLAUDE.md 字幕)
+
+    var subtitles: [SubtitleCue] { summary?.subtitles ?? [] }
+    private(set) var showSubtitles = false
+    /// Recognition languages this Mac offers (empty below macOS 26).
+    let speechLanguages: [String] = Engine.speechLanguages()
+
+    func languageName(_ id: String) -> String {
+        let display = Locale(identifier: Localization.shared.language == .simplifiedChinese ? "zh-Hans" : "en")
+        return display.localizedString(forIdentifier: id) ?? id
+    }
+
+    func setShowSubtitles(_ on: Bool) {
+        showSubtitles = on
+        Task {
+            await engine?.setShowSubtitles(on)
+            if !isPlaying { showFrame(playhead) }
+        }
+    }
+
+    /// Recognise speech; if that fails (often: the model is not on this Mac yet),
+    /// ask before downloading it, then try once more (CLAUDE.md 字幕: a red line).
+    func generateSubtitles(language: String) {
+        guard let engine, canEdit else { return }
+        stopPlaying()
+        busy = S.recognising
+        busyProgress = 0
+        Task {
+            defer { busy = nil }
+            do {
+                apply(try await engine.transcribe(language: language) { p in Task { @MainActor in self.busyProgress = p } },
+                      keepThumbnails: true)
+                showSubtitles = true
+            } catch is Cancelled {
+            } catch Engine.SubtitleError.recognition(let why) {
+                let ask = NSAlert()
+                ask.messageText = L(S.speechModelTitle)
+                ask.informativeText = L(S.speechModelBody(languageName(language), why))
+                ask.addButton(withTitle: L(S.download))
+                ask.addButton(withTitle: L(S.cancel))
+                guard ask.runModal() == .alertFirstButtonReturn else { return }
+                do {
+                    busy = S.downloadingModel
+                    busyProgress = 0
+                    try await engine.downloadSpeechModel(language: language) { p in Task { @MainActor in self.busyProgress = p } }
+                    busy = S.recognising
+                    busyProgress = 0
+                    apply(try await engine.transcribe(language: language) { p in Task { @MainActor in self.busyProgress = p } },
+                          keepThumbnails: true)
+                    showSubtitles = true
+                } catch is Cancelled {
+                } catch {
+                    alert = Alert(title: S.subtitlesFailed, message: "\(error)")
+                }
+            } catch {
+                alert = Alert(title: S.subtitlesFailed, message: "\(error)")
+            }
+        }
+    }
+
+    func importSubtitles() {
+        guard let engine, canEdit else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            do {
+                let (s, warnings) = try await engine.importSubtitles(url)
+                apply(s, keepThumbnails: true)
+                showSubtitles = true
+                if !warnings.isEmpty { alert = Alert(title: S.subtitlesImported, message: warnings.joined(separator: "\n")) }
+            } catch {
+                alert = Alert(title: S.subtitlesFailed, message: "\(error)")
+            }
+        }
+    }
+
+    func setCueText(_ text: String, cue k: Int) {
+        guard let engine else { return }
+        Task { if let s = await engine.setCueText(text, cue: k) { apply(s, keepThumbnails: true) } }
+    }
+
+    func deleteCue(_ k: Int) {
+        guard let engine else { return }
+        Task { if let s = await engine.deleteCue(k) { apply(s, keepThumbnails: true) } }
+    }
+
+    func clearSubtitles() {
+        guard let engine else { return }
+        Task { if let s = await engine.clearSubtitles() { apply(s, keepThumbnails: true) } }
+    }
+
+    func seek(toSeconds t: Double) {
+        guard let s = summary else { return }
+        seek(min(Int(t * s.frameRate), s.frameCount - 1))
+    }
 
     // MARK: reframe
 
@@ -407,6 +507,15 @@ final class Project {
             cubes = dir
         }
         let codec = exportCodec, audio = exportAudio && (summary?.hasAudio ?? false)
+        let hasSubtitles = !subtitles.isEmpty, burn = burnSubtitles && hasSubtitles
+        let srt: URL? = exportSRT && hasSubtitles ? output.deletingPathExtension().appendingPathExtension("srt") : nil
+        if let srt, FileManager.default.fileExists(atPath: srt.path) {
+            let ask = NSAlert()
+            ask.messageText = L(S.replaceSRTTitle(srt.lastPathComponent))
+            ask.addButton(withTitle: L(S.replace))
+            ask.addButton(withTitle: L(S.cancel))
+            guard ask.runModal() == .alertFirstButtonReturn else { return }
+        }
         Task {
             if let dir = cubes {
                 let existing = await engine.cubeNames().filter {
@@ -425,6 +534,7 @@ final class Project {
             exportChecking = false
             do {
                 let report = try await engine.export(to: output, codec: codec, audio: audio, cubes: cubes,
+                                                     burnSubtitles: burn, srt: srt,
                     progress: { p in Task { @MainActor in if self.exportProgress != nil { self.exportProgress = p } } },
                     checking: { Task { @MainActor in self.exportChecking = true } })
                 lastExport = output

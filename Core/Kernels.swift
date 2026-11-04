@@ -153,6 +153,35 @@ public final class GradeKernels: @unchecked Sendable {
         return out
     }
 
+    // MARK: overlay
+
+    /// A premultiplied sRGB RGBA8 patch, row-major (a rasterised subtitle).
+    public func makeOverlay(rgba: [UInt8], width: Int, height: Int) throws -> OverlayImage {
+        precondition(rgba.count == width * height * 4)
+        let buffer = try XUnwrap(rgba.withUnsafeBytes {
+            metal.device.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 4), options: .storageModeShared)
+        }, "overlay of \(width)x\(height)")
+        return OverlayImage(buffer: buffer, width: width, height: height)
+    }
+
+    /// `overlay` composited onto `img` in place with its top-left at `origin` (CLAUDE.md 字幕叠加).
+    public func encodeOverlay(into enc: MTLComputeCommandEncoder, _ img: PlanarImage, _ overlay: OverlayImage,
+                              origin: SIMD2<Int32>) throws {
+        guard overlay.width > 0, overlay.height > 0 else { return }
+        struct Params { var iw, ih, ow, oh: UInt32; var ox, oy: Int32 }
+        var params = Params(iw: UInt32(img.width), ih: UInt32(img.height), ow: UInt32(overlay.width), oh: UInt32(overlay.height),
+                            ox: origin.x, oy: origin.y)
+        enc.setComputePipelineState(try metal.pipeline("overlay_premultiplied"))
+        enc.setBuffer(img.buffer, offset: 0, index: 0)
+        enc.setBuffer(overlay.buffer, offset: 0, index: 1)
+        enc.setBytes(&params, length: MemoryLayout<Params>.size, index: 2)
+        enc.dispatchThreads(MTLSize(width: overlay.width, height: overlay.height, depth: 1), threadsPerThreadgroup: tile2D)
+    }
+
+    public func overlay(_ img: PlanarImage, _ overlay: OverlayImage, origin: SIMD2<Int32>) throws {
+        try metal.run { try encodeOverlay(into: $0, img, overlay, origin: origin) }
+    }
+
     // MARK: AiLUT
 
     public func applyAiLUT(_ img: PlanarImage, _ ai: AiLUT) throws -> PlanarImage {
@@ -275,10 +304,12 @@ public final class GradeKernels: @unchecked Sendable {
     /// ungraded RGB -> BGRA8 in `original`. `scratch` must match the frame size.
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
                                  lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
-                                 graded: MTLTexture, original: MTLTexture?) throws {
+                                 graded: MTLTexture, original: MTLTexture?,
+                                 overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
         try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
         if let original { try encodeWriteBGRA8(into: enc, scratch.rgb, to: original) }
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
+        if let overlay { try encodeOverlay(into: enc, scratch.graded, overlay.0, origin: overlay.1) }
         try encodeWriteBGRA8(into: enc, scratch.graded, to: graded)
     }
 
@@ -287,10 +318,11 @@ public final class GradeKernels: @unchecked Sendable {
     public func encodeGradeFrame(into enc: MTLComputeCommandEncoder, luma: MTLTexture, chroma: MTLTexture,
                                  lut: LUT3D, scratch: (rgb: PlanarImage, graded: PlanarImage),
                                  crop origin: SIMD2<Float>, length: SIMD2<Float>, cropped: PlanarImage,
-                                 output: MTLTexture) throws {
+                                 output: MTLTexture, overlay: (OverlayImage, SIMD2<Int32>)? = nil) throws {
         try encodeYUVToRGB(into: enc, luma: luma, chroma: chroma, output: scratch.rgb)
         try encodeApplyLUT(into: enc, scratch.rgb, lut, output: scratch.graded)
         try encodeCropResize(into: enc, scratch.graded, origin: origin, length: length, output: cropped)
+        if let overlay { try encodeOverlay(into: enc, cropped, overlay.0, origin: overlay.1) }
         try encodeWriteBGRA8(into: enc, cropped, to: output)
     }
 
@@ -301,6 +333,19 @@ public final class GradeKernels: @unchecked Sendable {
 
     private func makeBuffer(floats count: Int) throws -> MTLBuffer {
         try XUnwrap(metal.device.makeBuffer(length: count * 4, options: .storageModeShared), "buffer of \(count) floats")
+    }
+}
+
+/// A rasterised subtitle on the GPU: premultiplied sRGB RGBA8.
+public final class OverlayImage: @unchecked Sendable {
+    public let buffer: MTLBuffer
+    public let width: Int
+    public let height: Int
+
+    init(buffer: MTLBuffer, width: Int, height: Int) {
+        self.buffer = buffer
+        self.width = width
+        self.height = height
     }
 }
 

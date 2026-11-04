@@ -121,6 +121,26 @@ kernel void crop_resize_aa(device const float *src  [[buffer(0)]],
     dst[g.z * p.dw * p.dh + g.y * p.dw + g.x] = acc / (sumx * sumy);
 }
 
+// ----------------------------------------------------------------- overlay --
+// Subtitles over the graded picture (CLAUDE.md 字幕叠加): premultiplied sRGB
+// RGBA8 at an integer origin, possibly partly outside; out = src*(1-a) + premul.
+struct OverlayParams { uint iw, ih, ow, oh; int ox, oy; };
+
+kernel void overlay_premultiplied(device float *img            [[buffer(0)]],
+                                  device const uchar4 *overlay [[buffer(1)]],
+                                  constant OverlayParams &p    [[buffer(2)]],
+                                  uint2 g                      [[thread_position_in_grid]])
+{
+    if (g.x >= p.ow || g.y >= p.oh) return;
+    const int x = p.ox + int(g.x), y = p.oy + int(g.y);
+    if (x < 0 || y < 0 || x >= int(p.iw) || y >= int(p.ih)) return;
+    const float4 o = float4(overlay[g.y * p.ow + g.x]) / 255.0f;
+    const uint i = uint(y) * p.iw + uint(x), n = p.iw * p.ih;
+    img[i]         = img[i] * (1.0f - o.a) + o.r;
+    img[i + n]     = img[i + n] * (1.0f - o.a) + o.g;
+    img[i + 2 * n] = img[i + 2 * n] * (1.0f - o.a) + o.b;
+}
+
 // ------------------------------------------------------------------- AiLUT --
 // Mirrors upstream ailut_transform_cpu.cpp: lower_bound + trilinear, same eps,
 // same operation order.

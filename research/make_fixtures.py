@@ -19,6 +19,8 @@ Contents
                 synthetic_av_880.mp4: the same video + 10 s 880 Hz (audio that must not match)
                 synthetic_subject.mp4: a disk moving left to right over noise (subject detection)
   crop        crop_*: crop-and-resize (reframe) cases, see CROP_CASES and the manifest
+  overlay     overlay_rgba.u8 + overlay_*: subtitle compositing (premultiplied over)
+  subtitles   subtitles_sample.srt: a messy SRT for the lenient parser (BOM, CRLF, gaps)
                 synthetic_f15_{y,cb,cr}: decoder planes of frame 15
                 synthetic_f15_rgb: those planes through the YUV->RGB convention
   manifest.json shapes, dtypes, sha256, and the expected shot list
@@ -183,6 +185,41 @@ CROP_CASES = [
 ]
 
 
+def overlay_rgba(w=120, h=80):
+    """A synthetic premultiplied sRGB RGBA8 patch with fully clear, fully opaque
+    and half-transparent areas (no text: text rasterisation is not a fixture)."""
+    y, x = np.mgrid[0:h, 0:w]
+    a = np.clip((x * 255) // (w - 1), 0, 255).astype(np.uint8)          # alpha ramps 0 -> 255 left to right
+    a[:, : w // 6] = 0
+    a[:, -(w // 6):] = 255
+    colour = np.stack([(x * 7) % 256, (y * 11) % 256, ((x + y) * 5) % 256], -1).astype(np.uint16)
+    rgb = (colour * a[..., None].astype(np.uint16) + 127) // 255           # premultiplied, rounded
+    return np.dstack([rgb.astype(np.uint8), a])
+
+
+def overlay(img, rgba, origin):
+    """img (1,3,H,W) float; rgba (h,w,4) premultiplied uint8 at integer `origin`
+    (may lie partly outside): out = src*(1-a) + premul (CLAUDE.md 字幕叠加)."""
+    out = img.clone()
+    H, W = img.shape[2:]
+    h, w = rgba.shape[:2]
+    ox, oy = origin
+    x0, y0, x1, y1 = max(ox, 0), max(oy, 0), min(ox + w, W), min(oy + h, H)
+    o = torch.from_numpy(rgba.astype(np.float32) / 255.0)[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    a = o[..., 3]
+    for c in range(3):
+        out[0, c, y0:y1, x0:x1] = img[0, c, y0:y1, x0:x1] * (1 - a) + o[..., c]
+    return out
+
+
+OVERLAY_CASES = [("overlay_inside", (60, 40)), ("overlay_clipped", (-20, 200))]
+
+SUBTITLE_SAMPLE = ("\ufeff1\r\n00:00:01,000 --> 00:00:02,500\r\n你好\r\n\r\n"
+                   "00:00:03.000 --> 00:00:04.000\nno number, dot separator\nsecond line\n\n"
+                   "7\nnot a time line\nbroken\n\n"
+                   "9\n00:00:03,500 --> 00:00:05,000\noverlaps\n")
+
+
 def frame_times(path):
     out = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                                    "frame=pts_time", "-of", "csv=p=0", str(path)]).decode()
@@ -336,7 +373,18 @@ def generate(dest: Path):
         crops.append({"name": name, "input": src, "transposed": transposed, "origin": list(origin),
                       "length": list(length), "output": list(out)})
 
-    m.write(generator="research/make_fixtures.py", crop_cases=crops, upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
+    rgba = overlay_rgba()
+    (dest / "overlay_rgba.u8").write_bytes(rgba.tobytes())
+    m.record("overlay_rgba", dest / "overlay_rgba.u8", file="overlay_rgba.u8", dtype="uint8", shape=list(rgba.shape),
+             note="premultiplied sRGB RGBA8: clear / ramp / opaque")
+    for name, origin in OVERLAY_CASES:
+        m.tensor(name, overlay(sources["demo_resized256"], rgba, origin), f"overlay_rgba over demo_resized256 at {origin}")
+    srt = dest / "subtitles_sample.srt"
+    srt.write_bytes(SUBTITLE_SAMPLE.encode("utf-8"))
+    m.record("subtitles_sample.srt", srt, file=srt.name, dtype="text", shape=[], note="BOM, CRLF and LF, missing number, bad block, overlap")
+
+    m.write(generator="research/make_fixtures.py", crop_cases=crops,
+            overlay_cases=[{"name": n, "origin": list(o)} for n, o in OVERLAY_CASES], upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
             torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times)
     print(f"synthetic shots: {expected}")
 

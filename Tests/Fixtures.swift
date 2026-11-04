@@ -33,6 +33,12 @@ enum Fixtures {
         let cut_threshold: Float
         let vfr_frame_times: [Double]
         let crop_cases: [CropCase]
+        let overlay_cases: [OverlayCase]
+    }
+
+    struct OverlayCase: Decodable {
+        let name: String
+        let origin: [Int32]
     }
 
     static let manifest: Manifest = {
