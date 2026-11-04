@@ -166,8 +166,12 @@ struct MainWindow: View {
         } detail: {
             VStack(spacing: 0) {
                 ZStack {
-                    PreviewView(frame: project.display, split: project.split, mode: project.compare)
-                    CompareOverlay(project: project)
+                    if sidebar == 2 && project.selectedCover != nil {
+                        CoverPreview(project: project)   // the exported cover (CLAUDE.md 封面)
+                    } else {
+                        PreviewView(frame: project.display, split: project.split, mode: project.compare)
+                        CompareOverlay(project: project)
+                    }
                     overlayStatus
                 }
                 Divider()

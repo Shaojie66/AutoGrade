@@ -84,20 +84,27 @@ enum S {
                                  zh: "从每个镜头里挑出最清晰、曝光最好的一帧，优先有人脸、画面稳定的时刻。封面调色与导出一致，不带字幕。")
     static let findingCovers = Copy(en: "Finding cover frames", zh: "正在挑选封面帧")
     static let coversFailed = Copy(en: "Couldn’t make the covers", zh: "无法生成封面")
-    static func coverRow(rank: Int, shot: Int, frame: Int) -> Copy {
-        Copy(en: "#\(rank) · Shot \(shot) · Frame \(frame)", zh: "第 \(rank) 名 · 镜头 \(shot) · 第 \(frame) 帧")
+    /// Shot and frame numbers count from 1, as in the shot list and the transport.
+    static func coverRow(rank: Int, shot: Int) -> Copy {
+        Copy(en: "#\(rank) · Shot \(shot)", zh: "第 \(rank) 名 · 镜头 \(shot)")
     }
-    static func coverScore(_ score: Double) -> Copy {
+    static func coverDetail(frame: Int, score: Double) -> Copy {
         let t = String(format: "%.2f", score)
-        return Copy(en: "Score \(t)", zh: "得分 \(t)")
+        return Copy(en: "Frame \(frame) · Score \(t)", zh: "第 \(frame) 帧 · 得分 \(t)")
+    }
+    static func coverPreviewLabel(_ w: Int, _ h: Int) -> Copy {
+        Copy(en: "Cover preview, \(w)×\(h)", zh: "封面预览，\(w)×\(h)")
+    }
+    static func coverPreviewSize(_ w: Int, _ h: Int) -> Copy {
+        Copy(en: "\(w)×\(h) — the exported pixels", zh: "\(w)×\(h)，即导出的像素")
     }
     static let coverShortShots = Copy(en: "Shots shorter than 1 s are not considered.", zh: "短于 1 秒的镜头不参加评选。")
     static let coverInclude = Copy(en: "Export this cover", zh: "导出这张封面")
     static let coverShapes = Copy(en: "Shapes", zh: "画幅")
     static let coverOriginal = Copy(en: "Original", zh: "原画幅")
     static let coverFormat = Copy(en: "Format", zh: "格式")
-    static let coverPreviewTitle = Copy(en: "Preview — the exported pixels", zh: "预览：即导出的像素")
-    static let coverSelectHint = Copy(en: "Select a frame to preview its cover.", zh: "选中一帧即可预览封面。")
+    static let coverPreviewTitle = Copy(en: "Preview shape", zh: "预览画幅")
+    static let coverSelectHint = Copy(en: "Select a frame to preview its cover in the main view.", zh: "选中一帧，主画面显示封面预览。")
     static let exportCoversButton = Copy(en: "Export Covers…", zh: "导出封面…")
     static let chooseCoverFolder = Copy(en: "Choose a folder for the covers", zh: "选择存放封面的文件夹")
     static let exportingCovers = Copy(en: "Exporting covers", zh: "正在导出封面")

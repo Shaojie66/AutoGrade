@@ -2,8 +2,9 @@ import AutoGradeCore
 import SwiftUI
 
 /// Cover frames (CLAUDE.md 封面): find them once, tick the ones to export,
-/// pick shapes and a format. The preview below is the exported pixels; the
-/// row pictures are the shot list's approximate thumbnails.
+/// pick shapes and a format. The selected cover is previewed in the main view
+/// (`CoverPreview`, the exported pixels); the row pictures are the shot list's
+/// approximate thumbnails.
 struct CoverList: View {
     @Bindable var project: Project
 
@@ -44,7 +45,9 @@ struct CoverList: View {
                 Text("JPEG").tag(CoverFormat.jpeg)
             }
             .pickerStyle(.segmented)
-            preview
+            if project.selectedCover == nil {
+                Text(L(S.coverSelectHint)).font(.caption).foregroundStyle(.secondary)
+            }
             Text(L(S.coverShortShots)).font(.caption).foregroundStyle(.secondary)
             Button(L(S.exportCoversButton)) { project.exportCovers() }
                 .disabled(!project.canExportCovers)
@@ -52,29 +55,10 @@ struct CoverList: View {
         }
     }
 
-    @ViewBuilder private var preview: some View {
-        if project.selectedCover != nil {
-            Picker(L(S.coverPreviewTitle), selection: $project.coverPreviewAspect) {
-                ForEach(CoverAspect.allCases, id: \.self) { a in Text(name(a)).tag(a) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            Text(L(S.coverPreviewTitle)).font(.caption).foregroundStyle(.secondary)
-            Group {
-                if let image = project.coverPreview {
-                    Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: 220)
-        } else {
-            Text(L(S.coverSelectHint)).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private func name(_ a: CoverAspect) -> String { a == .original ? L(S.coverOriginal) : a.rawValue }
+    private func name(_ a: CoverAspect) -> String { coverAspectName(a) }
 }
+
+@MainActor func coverAspectName(_ a: CoverAspect) -> String { a == .original ? L(S.coverOriginal) : a.rawValue }
 
 private struct CoverRow: View {
     @Bindable var project: Project
@@ -99,8 +83,9 @@ private struct CoverRow: View {
             .frame(width: 72, height: 40)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             VStack(alignment: .leading, spacing: 2) {
-                Text(L(S.coverRow(rank: rank, shot: candidate.shot + 1, frame: candidate.frame))).font(.callout)
-                Text(L(S.coverScore(candidate.rank))).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(L(S.coverRow(rank: rank, shot: candidate.shot + 1))).font(.callout).lineLimit(1)
+                Text(L(S.coverDetail(frame: candidate.frame + 1, score: candidate.rank)))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .padding(.vertical, 2)
