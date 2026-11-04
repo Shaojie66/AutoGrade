@@ -326,9 +326,10 @@ extension AutoGrader {
 
     /// The cover's pixels: the export's frame (`decodeFrame(…, exact: true)` with the
     /// export's enhancer), its shot's final LUT, cropped and resized — the same
-    /// `encodeGradeFrame` the export uses, without subtitles. BGRA8, rows packed.
+    /// `encodeGradeFrame` the export uses, without subtitles; `title` (from
+    /// `coverTitleOverlay`) is laid over before quantising, like a subtitle. BGRA8, rows packed.
     public func renderCover(_ frame: EnhancedFrame, lut: LUT3D, aspect: CoverAspect, center: SIMD2<Float>,
-                            into targets: CoverTargets) throws -> [UInt8] {
+                            into targets: CoverTargets, title: (OverlayImage, SIMD2<Int32>)? = nil) throws -> [UInt8] {
         precondition(targets.aspect == aspect)
         let f = frame.frame
         let (origin, length) = Cover.crop(center: center, aspect: aspect, width: targets.sourceWidth,
@@ -337,10 +338,11 @@ extension AutoGrader {
             if let cropped = targets.cropped {
                 try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
                                              crop: origin, length: length, cropped: cropped, output: targets.output,
-                                             background: frame.background)
+                                             background: frame.background, overlay: title)
             } else {
                 try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
-                                             graded: targets.output, original: nil, background: frame.background)
+                                             graded: targets.output, original: nil, background: frame.background,
+                                             overlay: title)
             }
         }
         let (w, h) = (targets.output.width, targets.output.height)

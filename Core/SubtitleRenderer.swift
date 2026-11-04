@@ -37,39 +37,57 @@ public enum SubtitleRenderer {
         let pad = Int((size * strokePercent / 100 + size * 0.12).rounded(.up)) + 2
         let lineHeight = size * lineSpacing
         let bw = Int(built.width.rounded(.up)) + 2 * pad, bh = Int((lineHeight * CGFloat(text.count)).rounded(.up)) + 2 * pad
+        let lines = built.fills.indices.map { i -> TextLine in
+            let lw = CTLineGetTypographicBounds(built.fills[i], nil, nil, nil)
+            // CoreGraphics is bottom-up: line i sits i lines below the top
+            let baseline = CGFloat(bh) - CGFloat(pad) - lineHeight * CGFloat(i) - built.ascent - (lineHeight - built.ascent - built.descent) / 2
+            return TextLine(fill: built.fills[i], stroke: built.strokes[i], position: CGPoint(x: (CGFloat(bw) - lw) / 2, y: baseline),
+                            size: size)
+        }
+        let drawn = draw(lines, width: bw, height: bh)
+        guard let rgba = drawn else { return nil }
+        let x = (w - bw) / 2
+        let y = vertical ? Int((CGFloat(h) * verticalCentre).rounded()) - bh / 2
+                         : h - Int((CGFloat(h) * bottomMargin).rounded()) - bh
+        return Raster(rgba: rgba, width: bw, height: bh, origin: SIMD2(Int32(x), Int32(y)), fontSize: size)
+    }
+
+    /// One line to draw: its white fill and black stroke, the baseline start in
+    /// the bitmap (bottom-up), and its font size (the shadow scales with it).
+    struct TextLine {
+        let fill: CTLine
+        let stroke: CTLine
+        let position: CGPoint
+        let size: CGFloat
+    }
+
+    /// Premultiplied sRGB RGBA8 of `lines`, shared by subtitles and cover titles.
+    /// Two passes: the black stroke (with the shadow) first, the white fill on top, so
+    /// the outline only shows outside the glyphs. One fill-and-stroke pass centres the
+    /// stroke on the outline and its inner half covered thin CJK strokes black
+    /// (2026-11-04: black text with a white rim).
+    static func draw(_ lines: [TextLine], width bw: Int, height bh: Int) -> [UInt8]? {
         var rgba = [UInt8](repeating: 0, count: bw * bh * 4)
         let drawn: Bool = rgba.withUnsafeMutableBytes { raw in
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let ctx = CGContext(data: raw.baseAddress, width: bw, height: bh, bitsPerComponent: 8, bytesPerRow: bw * 4,
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
                                           | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
-            // Two passes: the black stroke (with the shadow) first, the white fill on top, so
-            // the outline only shows outside the glyphs. One fill-and-stroke pass centres the
-            // stroke on the outline and its inner half covered thin CJK strokes black
-            // (2026-11-04: black text with a white rim).
-            for pass in [built.strokes, built.fills] {
+            for strokePass in [true, false] {
                 ctx.saveGState()
-                if pass == built.strokes {
-                    ctx.setShadow(offset: CGSize(width: 0, height: -size * 0.04), blur: size * 0.12,
-                                  color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.5))
-                }
-                for (i, line) in pass.enumerated() {
-                    let lw = CTLineGetTypographicBounds(built.fills[i], nil, nil, nil)
-                    let x = (CGFloat(bw) - lw) / 2
-                    // CoreGraphics is bottom-up: line i sits i lines below the top
-                    let baseline = CGFloat(bh) - CGFloat(pad) - lineHeight * CGFloat(i) - built.ascent - (lineHeight - built.ascent - built.descent) / 2
-                    ctx.textPosition = CGPoint(x: x, y: baseline)
-                    CTLineDraw(line, ctx)
+                for line in lines {
+                    if strokePass {
+                        ctx.setShadow(offset: CGSize(width: 0, height: -line.size * 0.04), blur: line.size * 0.12,
+                                      color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.5))
+                    }
+                    ctx.textPosition = line.position
+                    CTLineDraw(strokePass ? line.stroke : line.fill, ctx)
                 }
                 ctx.restoreGState()
             }
             return true
         }
-        guard drawn else { return nil }
-        let x = (w - bw) / 2
-        let y = vertical ? Int((CGFloat(h) * verticalCentre).rounded()) - bh / 2
-                         : h - Int((CGFloat(h) * bottomMargin).rounded()) - bh
-        return Raster(rgba: rgba, width: bw, height: bh, origin: SIMD2(Int32(x), Int32(y)), fontSize: size)
+        return drawn ? rgba : nil
     }
 
     struct Layout {

@@ -77,6 +77,15 @@ final class Project {
         didSet { refreshCoverPreview() }
     }
     private(set) var coverPreview: NSImage?
+    private(set) var coverTitleOverlapsFace = false
+    /// The owner's title on every cover (CLAUDE.md 封面 / 版式); empty = none.
+    var coverTitleText = "" { didSet { if coverTitleText != oldValue { refreshCoverPreview() } } }
+    var coverSubtitleText = "" { didSet { if coverSubtitleText != oldValue { refreshCoverPreview() } } }
+    var coverTemplate: CoverTitleTemplate = .bottom { didSet { if coverTemplate != oldValue { refreshCoverPreview() } } }
+    private var coverTitle: CoverTitle? {
+        let t = CoverTitle(title: coverTitleText, subtitle: coverSubtitleText.isEmpty ? nil : coverSubtitleText, template: coverTemplate)
+        return t.isEmpty ? nil : t
+    }
     private(set) var coverThumbnails: [Int: NSImage] = [:]   // by frame
 
     private let engine: Engine?
@@ -387,11 +396,12 @@ final class Project {
             coverPreview = nil
             return
         }
-        let aspect = coverPreviewAspect
+        let aspect = coverPreviewAspect, title = coverTitle
         Task {
-            guard let image = try? await engine.coverPreview(c, aspect: aspect),
-                  selectedCover == f, coverPreviewAspect == aspect else { return }
+            guard let (image, overlaps) = try? await engine.coverPreview(c, aspect: aspect, title: title),
+                  selectedCover == f, coverPreviewAspect == aspect, coverTitle == title else { return }
             coverPreview = NSImage(cgImage: image.value, size: NSSize(width: image.value.width, height: image.value.height))
+            coverTitleOverlapsFace = overlaps
         }
     }
 
@@ -414,7 +424,7 @@ final class Project {
         folder.prompt = L(S.exportCoversButton)
         folder.directoryURL = source.deletingLastPathComponent()
         guard folder.runModal() == .OK, let dir = folder.url else { return }
-        let chosen = chosenCovers, format = coverFormat
+        let chosen = chosenCovers, format = coverFormat, title = coverTitle
         let aspects = CoverAspect.allCases.filter(coverAspects.contains)
         let names = Engine.coverNames(source: source, covers: chosen, aspects: aspects, format: format)
         let existing = names.filter { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
@@ -430,7 +440,7 @@ final class Project {
         busyProgress = 0
         Task {
             do {
-                let checks = try await engine.exportCovers(chosen, aspects: aspects, format: format, to: dir) { p in
+                let checks = try await engine.exportCovers(chosen, aspects: aspects, format: format, title: title, to: dir) { p in
                     Task { @MainActor in self.busyProgress = p }
                 }
                 let failed = checks.filter { !$0.passed }

@@ -40,6 +40,19 @@ struct CoverList: View {
                         .toggleStyle(.checkbox)
                 }
             }
+            Text(L(S.coverTitle)).font(.caption).foregroundStyle(.secondary)
+            TextField(L(S.coverTitle), text: $project.coverTitleText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(L(S.coverTitle))
+            TextField(L(S.coverSubtitle), text: $project.coverSubtitleText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(L(S.coverSubtitle))
+            Picker(L(S.coverTemplate), selection: $project.coverTemplate) {
+                Text(L(S.templateBottom)).tag(CoverTitleTemplate.bottom)
+                Text(L(S.templateCorner)).tag(CoverTitleTemplate.corner)
+                Text(L(S.templateCenter)).tag(CoverTitleTemplate.center)
+            }
+            .pickerStyle(.segmented)
             Picker(L(S.coverFormat), selection: $project.coverFormat) {
                 Text("PNG").tag(CoverFormat.png)
                 Text("JPEG").tag(CoverFormat.jpeg)

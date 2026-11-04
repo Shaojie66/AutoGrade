@@ -7,6 +7,7 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
                  [--subtitles srt|burn|both] [--subtitle-lang zh-CN] [--subtitle-file in.srt]
                  [--denoise 0.5] [--background blur|white|black|green|#RRGGBB] [--background-strength 0.6]
                  [--covers DIR] [--cover-aspects 3:4,16:9] [--cover-count 3] [--cover-format png|jpeg] [--cover-overwrite]
+                 [--cover-title TEXT] [--cover-subtitle TEXT] [--cover-template bottom|corner|center]
        autograde <input> --covers DIR [...]          covers only, no video
        autograde --list-styles
        autograde --list-languages
@@ -33,6 +34,8 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
                --cover-count (default 3), graded like the video, in each of --cover-aspects
                (3:4 1080x1440, 4:3 1440x1080, 16:9 1920x1080, orig; default 3:4,16:9); PNG unless
                --cover-format jpeg. Existing files are an error unless --cover-overwrite.
+  --cover-title TEXT  draw this title on every cover (white, black outline), kept clear of the face when it can be;
+               --cover-subtitle adds a smaller second line; --cover-template bottom (default), corner or center
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
@@ -64,6 +67,7 @@ struct CoverOptions {
     var count = Cover.defaultCount
     var format = CoverFormat.png
     var overwrite = false
+    var title: CoverTitle?
 }
 
 func fail(_ message: String) -> Never {
@@ -86,6 +90,7 @@ func parse(_ args: [String]) -> Options {
     var denoise: Float?, background: String?, backgroundStrength = BackgroundEffect.defaultBlurStrength
     var coverDir: URL?, coverAspects = Cover.defaultAspects, coverCount = Cover.defaultCount, coverFormat = CoverFormat.png
     var coverOverwrite = false
+    var coverTitle: String?, coverSubtitle: String?, coverTemplate = CoverTitleTemplate.bottom
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -128,6 +133,10 @@ func parse(_ args: [String]) -> Options {
             guard coverCount >= 1 else { fail("--cover-count must be at least 1") }
         case "--cover-format": coverFormat = convert(value(arg), CoverFormat.init(rawValue:), "--cover-format is png or jpeg")
         case "--cover-overwrite": coverOverwrite = true
+        case "--cover-title": coverTitle = value(arg)
+        case "--cover-subtitle": coverSubtitle = value(arg)
+        case "--cover-template":
+            coverTemplate = convert(value(arg), CoverTitleTemplate.init(rawValue:), "--cover-template is bottom, corner or center")
         case "--list-languages": listLanguages(); exit(0)
         case "--download-speech-model": downloadModel(value(arg)); exit(0)
         case "--list-styles": listStyles(); exit(0)
@@ -139,6 +148,8 @@ func parse(_ args: [String]) -> Options {
     }
     guard let input, output != nil || coverDir != nil else { fail(usage) }
     if output == nil && subtitles != nil { fail("--subtitles needs -o (covers have no subtitles)") }
+    if coverDir == nil && (coverTitle != nil || coverSubtitle != nil) { fail("--cover-title needs --covers") }
+    if coverSubtitle != nil && coverTitle == nil { fail("--cover-subtitle needs --cover-title") }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
     if denoise != nil && !EnhanceSettings.denoiseAvailable { fail("--denoise needs macOS 26 or later") }
     let effect: BackgroundEffect? = background.map {
@@ -151,7 +162,8 @@ func parse(_ args: [String]) -> Options {
                    reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile,
                    enhance: EnhanceSettings(denoise: denoise, background: effect),
                    covers: coverDir.map { CoverOptions(directory: $0, aspects: coverAspects, count: coverCount, format: coverFormat,
-                                                       overwrite: coverOverwrite) })
+                                                       overwrite: coverOverwrite,
+                                                       title: coverTitle.map { CoverTitle(title: $0, subtitle: coverSubtitle, template: coverTemplate) }) })
 }
 
 func listLanguages() {
@@ -355,7 +367,13 @@ do {
             targets[item.aspect] = t
             let centre = Cover.center(frame: pick.frame, track: track, shot: shot)
             let (w, h) = item.aspect.outputSize(sourceWidth: info.width, sourceHeight: info.height)
-            let bgra = try engine.renderCover(frame, lut: analysis.luts[pick.shot], aspect: item.aspect, center: centre, into: t)
+            let title = try c.title.flatMap {
+                try engine.coverTitleOverlay($0, aspect: item.aspect, sourceWidth: info.width, sourceHeight: info.height,
+                                             center: centre, face: track.samples[pick.frame])
+            }
+            if title?.overlapsFace == true { print("warning: cover \(item.rank) \(item.aspect.rawValue): the title overlaps the face") }
+            let bgra = try engine.renderCover(frame, lut: analysis.luts[pick.shot], aspect: item.aspect, center: centre, into: t,
+                                              title: title?.overlay)
             let check = try CoverWriter.write(bgra: bgra, width: w, height: h, to: item.url, format: c.format, overwrite: c.overwrite)
             print(String(format: "cover %d: shot %02d frame %d (pick %.3f, rank %.3f, centre %.2f,%.2f) %@ %dx%d -> %@ — %@",
                          item.rank, pick.shot, pick.frame, pick.pick, pick.rank, centre.x, centre.y, item.aspect.rawValue, w, h,
