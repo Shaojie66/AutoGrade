@@ -303,7 +303,8 @@ extension AutoGrader {
         let start = CFAbsoluteTimeGetCurrent()
         let reader = try VideoReader(url: url, device: metal.device)
         var f = CoverFeatures(), samples: [SubjectTrack.Sample?] = [], previous: [Double]?
-        while let frame = try reader.next() {
+        // one autorelease pool per frame (CLAUDE.md 已知坑: every frame loop)
+        try reader.forEachFrame { frame in
             if cancel?.isCancelled == true { throw Cancelled() }
             let (w, h, y) = Cover.luma(frame.pixelBuffer)
             let (sharpness, hi, lo, mean) = Cover.frameFeatures(y, width: w, height: h)
