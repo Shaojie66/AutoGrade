@@ -17,6 +17,11 @@ public enum Aspect: String, CaseIterable, Sendable {
     /// The largest crop of this aspect in a `width` x `height` frame, and the
     /// axis it slides along (0 = x, 1 = y). Only translation, never zoom.
     public func crop(width: Int, height: Int) -> (length: SIMD2<Float>, axis: Int) {
+        Aspect.largestCrop(ratio: ratio, width: width, height: height)
+    }
+
+    /// Shared with `CoverAspect` (CLAUDE.md 封面: the same crop rule).
+    static func largestCrop(ratio: Double, width: Int, height: Int) -> (length: SIMD2<Float>, axis: Int) {
         let w = Double(width), h = Double(height)
         if w / h > ratio { return (SIMD2(Float(h * ratio), Float(h)), 0) }
         return (SIMD2(Float(w), Float(w / ratio)), 1)

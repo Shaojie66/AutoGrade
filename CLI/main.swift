@@ -6,6 +6,8 @@ let usage = """
 usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut 0.25] [--size 65] [--codec hevc|prores] [--no-audio] [--reframe 9:16|16:9]
                  [--subtitles srt|burn|both] [--subtitle-lang zh-CN] [--subtitle-file in.srt]
                  [--denoise 0.5] [--background blur|white|black|green|#RRGGBB] [--background-strength 0.6]
+                 [--covers DIR] [--cover-aspects 3:4,16:9] [--cover-count 3] [--cover-format png|jpeg] [--cover-overwrite]
+       autograde <input> --covers DIR [...]          covers only, no video
        autograde --list-styles
        autograde --list-languages
        autograde --download-speech-model zh-CN
@@ -27,6 +29,10 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
   --denoise S  temporal noise reduction, strength 0-1 (macOS 26+)
   --background behind people: blur, or a flat colour (white, black, green, #RRGGBB)
   --background-strength S  blur strength 0-1 (default 0.6; sigma = 3% of the height at 1)
+  --covers DIR  write cover stills: each shot's best frame (sharpness, exposure, faces, motion), the top
+               --cover-count (default 3), graded like the video, in each of --cover-aspects
+               (3:4 1080x1440, 4:3 1440x1080, 16:9 1920x1080, orig; default 3:4,16:9); PNG unless
+               --cover-format jpeg. Existing files are an error unless --cover-overwrite.
   --reframe-csv FILE  also write each frame's crop and subject (frame, seconds, shot, mode, centre, origin,
                length, subject source / x / y)
   Input must be 8-bit 4:2:0 BT.709 limited range. After writing, the output is checked
@@ -36,7 +42,7 @@ usage: autograde <input> -o <output.mov> [--style fivek] [--cube-dir DIR] [--cut
 
 struct Options {
     var input: URL
-    var output: URL
+    var output: URL?              // nil: covers only
     var cubeDir: URL?
     var cut = ShotDetector.defaultThreshold
     var size = 65
@@ -49,6 +55,15 @@ struct Options {
     var subtitleLang = "zh-CN"
     var subtitleFile: URL?
     var enhance = EnhanceSettings()
+    var covers: CoverOptions?
+}
+
+struct CoverOptions {
+    var directory: URL
+    var aspects = Cover.defaultAspects
+    var count = Cover.defaultCount
+    var format = CoverFormat.png
+    var overwrite = false
 }
 
 func fail(_ message: String) -> Never {
@@ -69,6 +84,8 @@ func parse(_ args: [String]) -> Options {
     var reframeCSV: URL?
     var subtitles: String?, subtitleLang = "zh-CN", subtitleFile: URL?
     var denoise: Float?, background: String?, backgroundStrength = BackgroundEffect.defaultBlurStrength
+    var coverDir: URL?, coverAspects = Cover.defaultAspects, coverCount = Cover.defaultCount, coverFormat = CoverFormat.png
+    var coverOverwrite = false
     var it = args.makeIterator()
     func value(_ flag: String) -> String {
         guard let v = it.next() else { fail("\(flag) needs a value\n\n\(usage)") }
@@ -100,6 +117,17 @@ func parse(_ args: [String]) -> Options {
             let v = convert(value(arg), Float.init, "--background-strength wants 0-1")
             guard (0...1).contains(v) else { fail("--background-strength wants 0-1") }
             backgroundStrength = v
+        case "--covers": coverDir = URL(fileURLWithPath: value(arg), isDirectory: true)
+        case "--cover-aspects":
+            coverAspects = value(arg).split(separator: ",").map {
+                convert(String($0), CoverAspect.init(rawValue:), "--cover-aspects lists 3:4, 4:3, 16:9, orig")
+            }
+            if coverAspects.isEmpty { fail("--cover-aspects lists 3:4, 4:3, 16:9, orig") }
+        case "--cover-count":
+            coverCount = convert(value(arg), Int.init, "--cover-count wants an integer")
+            guard coverCount >= 1 else { fail("--cover-count must be at least 1") }
+        case "--cover-format": coverFormat = convert(value(arg), CoverFormat.init(rawValue:), "--cover-format is png or jpeg")
+        case "--cover-overwrite": coverOverwrite = true
         case "--list-languages": listLanguages(); exit(0)
         case "--download-speech-model": downloadModel(value(arg)); exit(0)
         case "--list-styles": listStyles(); exit(0)
@@ -109,7 +137,8 @@ func parse(_ args: [String]) -> Options {
             input = URL(fileURLWithPath: arg)
         }
     }
-    guard let input, let output else { fail(usage) }
+    guard let input, output != nil || coverDir != nil else { fail(usage) }
+    if output == nil && subtitles != nil { fail("--subtitles needs -o (covers have no subtitles)") }
     guard (2...129).contains(size) else { fail("--size must be in 2...129") }
     if denoise != nil && !EnhanceSettings.denoiseAvailable { fail("--denoise needs macOS 26 or later") }
     let effect: BackgroundEffect? = background.map {
@@ -120,7 +149,9 @@ func parse(_ args: [String]) -> Options {
     }
     return Options(input: input, output: output, cubeDir: cubeDir, cut: cut, size: size, codec: codec, style: style, audio: audio, reframe: reframe,
                    reframeCSV: reframeCSV, subtitles: subtitles, subtitleLang: subtitleLang, subtitleFile: subtitleFile,
-                   enhance: EnhanceSettings(denoise: denoise, background: effect))
+                   enhance: EnhanceSettings(denoise: denoise, background: effect),
+                   covers: coverDir.map { CoverOptions(directory: $0, aspects: coverAspects, count: coverCount, format: coverFormat,
+                                                       overwrite: coverOverwrite) })
 }
 
 func listLanguages() {
@@ -181,9 +212,10 @@ do {
     let a = analysis.times
     print("analyze: decode \(ms(a.decode, a.frames)), yuv→rgb \(ms(a.convert, a.frames)), resize \(ms(a.resize, a.frames)), "
           + "predict \(ms(a.predict, a.frames)), bake \(ms(a.bake, a.frames)), detect+avg \(ms(a.detect, a.frames))")
-    var path: CropPath?
+    var path: CropPath?, subjects: SubjectTrack?
     if let aspect = options.reframe {
         let track = try engine.detectSubjects(options.input, analysis: analysis)
+        subjects = track
         let p = Reframe.path(track: track, shots: analysis.shots, frameTimes: analysis.frameTimes, width: info.width,
                              height: info.height, aspect: aspect, overrides: Array(repeating: nil, count: analysis.shots.count))
         print(String(format: "reframe %@: crop %.1fx%.1f -> %dx%d; subject: %d faces, %d people, %d saliency, %d none; %@ (%.2f s)",
@@ -234,8 +266,8 @@ do {
             print(String(format: "subtitles: %@, %d tokens -> %d cues in %.2f s", locale.identifier, tokens.count, made.count,
                          CFAbsoluteTimeGetCurrent() - start))
         }
-        if mode != "burn", let cues {
-            let srt = options.output.deletingPathExtension().appendingPathExtension("srt")
+        if mode != "burn", let cues, let output = options.output {
+            let srt = output.deletingPathExtension().appendingPathExtension("srt")
             if FileManager.default.fileExists(atPath: srt.path) { fail("\(srt.path) already exists (refusing to overwrite)") }
             try Subtitles.srt(cues).write(to: srt, atomically: true, encoding: .utf8)
             print("wrote \(srt.path)")
@@ -255,40 +287,91 @@ do {
         print(String(format: "people:  %.2f s, %d of %d shots", Date().timeIntervalSince(start), people.count - skipped.count, people.count)
               + (skipped.isEmpty ? "" : "; no one found in shot \(skipped.joined(separator: ", ")), background left as it is"))
     }
-    let result = try engine.render(options.input, analysis: analysis, luts: analysis.luts, to: options.output,
-                                   codec: options.codec, audio: options.audio, reframe: path, subtitles: burn,
-                                   enhance: enhance.isEmpty ? nil : enhance)
-    let r = result.times
-    if let e = result.enhance {
-        print("enhance: " + [e.denoise.map { String(format: "denoise %.2f", $0) }, e.background.map { "background \($0)" }]
-            .compactMap { $0 }.joined(separator: ", "))
+    // covers (CLAUDE.md 封面): scan and name them before the long export, so an existing file fails early
+    var coverPlan: [(rank: Int, candidate: Cover.Candidate, aspect: CoverAspect, url: URL)] = []
+    if let c = options.covers {
+        let scan = try engine.coverScan(options.input, analysis: analysis, track: subjects)
+        let scores = Cover.scores(scan.features, faces: scan.track.samples, shots: analysis.shots, frameTimes: analysis.frameTimes)
+        let picks = Cover.candidates(scores, shots: analysis.shots, frameTimes: analysis.frameTimes)
+        print(String(format: "covers:  scan %@ (%.2f s)%@, %d candidates", ms(scan.seconds, analysis.frameCount), scan.seconds,
+                     subjects == nil ? " with subject detection" : "", picks.count))
+        let prefix = options.input.deletingPathExtension().lastPathComponent
+        for (r, pick) in picks.prefix(c.count).enumerated() {
+            for aspect in c.aspects {
+                let name = Cover.fileName(prefix: prefix, rank: r + 1, shot: pick.shot, frame: pick.frame, aspect: aspect, format: c.format)
+                coverPlan.append((r + 1, pick, aspect, c.directory.appendingPathComponent(name)))
+            }
+        }
+        if !c.overwrite, let existing = coverPlan.first(where: { FileManager.default.fileExists(atPath: $0.url.path) }) {
+            fail("\(existing.url.path) already exists (refusing to overwrite; --cover-overwrite replaces covers)")
+        }
+        subjects = scan.track
     }
-    for warning in result.warnings { print("warning: \(warning)") }
-    print("render:  decode \(ms(r.decode, r.frames)), yuv→rgb \(ms(r.convert, r.frames)), apply+bgra \(ms(r.apply, r.frames)), "
-          + "encode \(ms(r.encode, r.frames))")
-    print("wrote \(options.output.path)" + (result.audioPackets.map { " (audio: \($0) packets copied)" } ?? " (no audio)"))
-    let report = try engine.checkExport(options.output, source: options.input, analysis: analysis, luts: analysis.luts,
-                                        render: result)
-    for f in report.frames {
-        print(String(format: "check:   shot %02d frame %d: mean %.2f, bias R %+.2f G %+.2f B %+.2f levels",
-                     f.shot, f.frame, f.meanAbs, f.bias[0], f.bias[1], f.bias[2]))
+    var passed = true
+    if let output = options.output {
+        let result = try engine.render(options.input, analysis: analysis, luts: analysis.luts, to: output,
+                                       codec: options.codec, audio: options.audio, reframe: path, subtitles: burn,
+                                       enhance: enhance.isEmpty ? nil : enhance)
+        let r = result.times
+        if let e = result.enhance {
+            print("enhance: " + [e.denoise.map { String(format: "denoise %.2f", $0) }, e.background.map { "background \($0)" }]
+                .compactMap { $0 }.joined(separator: ", "))
+        }
+        for warning in result.warnings { print("warning: \(warning)") }
+        print("render:  decode \(ms(r.decode, r.frames)), yuv→rgb \(ms(r.convert, r.frames)), apply+bgra \(ms(r.apply, r.frames)), "
+              + "encode \(ms(r.encode, r.frames))")
+        print("wrote \(output.path)" + (result.audioPackets.map { " (audio: \($0) packets copied)" } ?? " (no audio)"))
+        let report = try engine.checkExport(output, source: options.input, analysis: analysis, luts: analysis.luts,
+                                            render: result)
+        for f in report.frames {
+            print(String(format: "check:   shot %02d frame %d: mean %.2f, bias R %+.2f G %+.2f B %+.2f levels",
+                         f.shot, f.frame, f.meanAbs, f.bias[0], f.bias[1], f.bias[2]))
+        }
+        if let d = report.audioMaxDiff, let f = report.audioFrames {
+            print(String(format: "check:   audio decoded: max diff %.2e, %d frames vs source %d", d, f.export, f.source))
+        }
+        print(String(format: "check:   %d video samples, %@, %.2f s — %@", report.videoSamples,
+                     report.audioPackets.map { "\($0) audio packets" } ?? "no audio", report.seconds,
+                     report.passed ? "passed" : "FAILED"))
+        if !report.subtitleBands.isEmpty {
+            print("check:   subtitle band, share far off: " + report.subtitleBands.map { String(format: "%.4f", $0) }.joined(separator: " "))
+        }
+        for failure in report.failures { print("check failed: \(failure)") }
+        passed = passed && report.passed
     }
-    if let d = report.audioMaxDiff, let f = report.audioFrames {
-        print(String(format: "check:   audio decoded: max diff %.2e, %d frames vs source %d", d, f.export, f.source))
+    if let c = options.covers, !coverPlan.isEmpty {
+        try FileManager.default.createDirectory(at: c.directory, withIntermediateDirectories: true)
+        let enhancer = try enhance.isEmpty ? nil : Enhancer(settings: enhance, width: info.width, height: info.height, kernels: engine.kernels)
+        var targets: [CoverAspect: CoverTargets] = [:]
+        var frames: [Int: EnhancedFrame] = [:]
+        let track = subjects ?? SubjectTrack(samples: Array(repeating: nil, count: analysis.frameCount))
+        for item in coverPlan {
+            let pick = item.candidate, shot = analysis.shots[pick.shot]
+            let frame = try frames[pick.frame] ?? engine.decodeFrame(options.input, analysis: analysis, index: pick.frame,
+                                                                       enhancer: enhancer, exact: true)
+            frames[pick.frame] = frame
+            let t = try targets[item.aspect] ?? CoverTargets(kernels: engine.kernels, sourceWidth: info.width,
+                                                             sourceHeight: info.height, aspect: item.aspect)
+            targets[item.aspect] = t
+            let centre = Cover.center(frame: pick.frame, track: track, shot: shot)
+            let (w, h) = item.aspect.outputSize(sourceWidth: info.width, sourceHeight: info.height)
+            let bgra = try engine.renderCover(frame, lut: analysis.luts[pick.shot], aspect: item.aspect, center: centre, into: t)
+            let check = try CoverWriter.write(bgra: bgra, width: w, height: h, to: item.url, format: c.format, overwrite: c.overwrite)
+            print(String(format: "cover %d: shot %02d frame %d (pick %.3f, rank %.3f, centre %.2f,%.2f) %@ %dx%d -> %@ — %@",
+                         item.rank, pick.shot, pick.frame, pick.pick, pick.rank, centre.x, centre.y, item.aspect.rawValue, w, h,
+                         item.url.lastPathComponent,
+                         check.passed ? (c.format == .png ? "check passed" : String(format: "check passed, mean %.2f", check.meanAbs))
+                                      : "CHECK FAILED"))
+            for failure in check.failures { print("cover check failed: \(failure)") }
+            passed = passed && check.passed
+        }
     }
-    print(String(format: "check:   %d video samples, %@, %.2f s — %@", report.videoSamples,
-                 report.audioPackets.map { "\($0) audio packets" } ?? "no audio", report.seconds,
-                 report.passed ? "passed" : "FAILED"))
-    if !report.subtitleBands.isEmpty {
-        print("check:   subtitle band, share far off: " + report.subtitleBands.map { String(format: "%.4f", $0) }.joined(separator: " "))
-    }
-    for failure in report.failures { print("check failed: \(failure)") }
     if let dir = options.cubeDir {
         let prefix = options.input.deletingPathExtension().lastPathComponent
         let cubes = try engine.writeCubes(analysis, luts: analysis.luts, to: dir, prefix: prefix)
         print("wrote \(cubes.count) .cube to \(dir.path)")
     }
-    if !report.passed { exit(1) }
+    if !passed { exit(1) }
 } catch {
     fail("\(error)")
 }

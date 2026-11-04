@@ -24,6 +24,8 @@ Contents
                 bg_masks.u8 + bg_combined: mask average and feather (CPU)
                 synthetic_clean.mp4 / synthetic_noisy.mp4: the same 20 frames, clean and with noise
                 synthetic_person.mp4: a face (gym_b) panning, then a cut to comic
+  cover       synthetic_cover.mp4: blurred / sharp / overexposed / dissolve / still / short pan (cover frames)
+                cover_features, cover_scores, cover_resized: the cover scan and scores (CLAUDE.md 封面)
   subtitles   subtitles_sample.srt: a messy SRT for the lenient parser (BOM, CRLF, gaps)
                 synthetic_f15_{y,cb,cr}: decoder planes of frame 15
                 synthetic_f15_rgb: those planes through the YUV->RGB convention
@@ -183,6 +185,123 @@ def make_person(path, face_png, other_png):
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
            "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_cover(path, face_png, other_png):
+    """Cover frame selection (CLAUDE.md 封面), 320x180 @ 30 fps, 120 frames:
+    0-59 gym_b still: 0-19 blurred, 20-39 sharp, 40-59 overexposed;
+    60-74 a dissolve gym_b -> comic, 75-104 comic still; 105-119 comic panning
+    (0.5 s, too short to compete). Shots are given explicitly (COVER_SHOTS)."""
+    ffmpeg("-loop", "1", "-framerate", "30", "-i", str(face_png), "-loop", "1", "-framerate", "30", "-i", str(other_png),
+           "-filter_complex",
+           "[0]scale=320:180,setsar=1,split=4[g0][g1][g2][g3];"
+           "[g0]gblur=sigma=4,trim=end_frame=20,setpts=PTS-STARTPTS[blur];"
+           "[g1]trim=end_frame=20,setpts=PTS-STARTPTS[sharp];"
+           "[g2]eq=brightness=0.5,trim=end_frame=20,setpts=PTS-STARTPTS[over];"
+           "[g3]trim=end_frame=15,setpts=PTS-STARTPTS[from];"
+           "[1]scale=640:360,setsar=1,split=3[c0][c1][c2];"
+           "[c0]crop=320:180:160:90,trim=end_frame=15,setpts=PTS-STARTPTS[to];"
+           "[from][to]blend=all_expr='A*(1-(N+1)/16)+B*(N+1)/16'[dissolve];"
+           "[c1]crop=320:180:160:90,trim=end_frame=30,setpts=PTS-STARTPTS[still];"
+           "[c2]crop=320:180:x='160+12*n':y=90,trim=end_frame=15,setpts=PTS-STARTPTS[pan];"
+           "[blur][sharp][over][dissolve][still][pan]concat=n=6:v=1:a=0,format=yuv420p[out]", "-map", "[out]",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
+# Cover scoring (CLAUDE.md 封面). The executable definition; Core/Cover.swift follows it.
+COVER_SHOTS = [[0, 59], [60, 104], [105, 119]]
+# Made-up face samples (frame, cx, cy, w, h; top-left origin) so the face term is
+# checked without depending on Vision: frames 25-35 a large central face, 80-90 a small one at the edge.
+COVER_FACES = [[i, 0.5, 0.4, 0.25, 0.3] for i in range(25, 36)] + [[i, 0.04, 0.5, 0.1, 0.1] for i in range(80, 91)]
+COVER_WEIGHTS = (0.4, 0.3, 0.2, 0.1)
+COVER_RESIZE = (150, 84)        # an extra resize case: (w, h) of frame 0's luma
+
+
+def cover_luma(y):
+    return np.clip((y.astype(np.float64) - 16) / 219, 0, 1)
+
+
+def cover_size(w, h, target=360):
+    return (w, h) if h <= target else (int(np.floor(w * target / h + 0.5)), target)
+
+
+def cover_resize(y, w, h):
+    """Bilinear, align_corners=False, no antialias: PyTorch's formula, float64."""
+    t = torch.from_numpy(y)[None, None]
+    return F.interpolate(t, size=(h, w), mode="bilinear", align_corners=False)[0, 0].numpy()
+
+
+def cover_frame_features(y):
+    lap = 4 * y[1:-1, 1:-1] - y[:-2, 1:-1] - y[2:, 1:-1] - y[1:-1, :-2] - y[1:-1, 2:]
+    return [lap.var(), (y >= 0.98).mean(), (y <= 0.02).mean(), y.mean()]
+
+
+def cover_features(path, n):
+    """Per frame: sharpness, hi, lo, mean, diff to previous, diff to next (0 at the ends)."""
+    w, h = probe_size(path)
+    aw, ah = cover_size(w, h)
+    lumas, feats = [], []
+    for i in range(n):
+        y = cover_luma(yuv_planes(path, i, w, h)[0])
+        if (aw, ah) != (w, h):
+            y = cover_resize(y, aw, ah)
+        lumas.append(y)
+        feats.append(cover_frame_features(y))
+    diffs = [np.abs(lumas[i] - lumas[i - 1]).mean() for i in range(1, n)]
+    out = np.zeros((n, 6))
+    out[:, :4] = feats
+    out[1:, 4] = diffs
+    out[:-1, 5] = diffs
+    return out
+
+
+def cover_scores(feat, faces, shots, times, within_shot=True):
+    """score = (0.4 S + 0.3 E + 0.2 F + 0.1 M) * T, float64. S is normalised by the
+    95th percentile of its shot (`within_shot`, picking a frame) or of the whole
+    video (ranking the shots' picks)."""
+    n = len(feat)
+    q = lambda x: float(np.quantile(x, 0.95))           # linear interpolation, like Reframe.quantile
+    S = np.zeros(n)
+    for a, b in (shots if within_shot else [[0, n - 1]]):
+        p_sharp = q(feat[a:b + 1, 0])
+        if p_sharp > 1e-12:
+            S[a:b + 1] = np.clip(feat[a:b + 1, 0] / p_sharp, 0, 1)
+    E = np.clip(1 - (feat[:, 1] + feat[:, 2]) / 0.10, 0, 1) * np.clip(1 - np.abs(feat[:, 3] - 0.45) / 0.55, 0, 1)
+    Fc = np.zeros(n)
+    for i, cx, cy, fw, fh in faces:
+        edge = min(cx - fw / 2, cy - fh / 2, 1 - (cx + fw / 2), 1 - (cy + fh / 2)) < 0.05
+        Fc[i] = min(1.0, fw * fh / 0.04) * (0.5 if edge else 1.0)
+    D = np.zeros(n)
+    for a, b in shots:
+        for i in range(a, b + 1):
+            sides = ([feat[i, 4]] if i > a else []) + ([feat[i, 5]] if i < b else [])
+            D[i] = np.mean(sides) if sides else 0
+    p_diff = q(D)
+    M = np.ones(n) if p_diff <= 1e-12 else 1 - np.clip(D / p_diff, 0, 1)
+    T = np.ones(n)
+    for a, b in shots:
+        dur = (b - a + 1) * frame_step(times, a, b)
+        win = min(max(0.1 * dur, 0.2), 0.5)
+        for i in range(a, b + 1):
+            d = min(times[i] - times[a], times[b] - times[i])
+            T[i] = 1.0 if d >= win else 0.5 + 0.5 * d / win
+    ws, we, wf, wm = COVER_WEIGHTS
+    return (ws * S + we * E + wf * Fc + wm * M) * T
+
+
+def frame_step(times, a, b):
+    """Reframe.frameDuration: mean frame spacing in the shot, 1/30 for one frame."""
+    return 1 / 30 if b == a else max((times[b] - times[a]) / (b - a), 1e-3)
+
+
+def cover_best(pick, rank, shots, times):
+    """Each eligible shot's best frame by `pick` (first on ties), ordered by `rank` at that frame."""
+    long = [s for s in shots if (s[1] - s[0] + 1) * frame_step(times, *s) >= 1.0] or shots
+    best = [max(range(a, b + 1), key=lambda i: (pick[i], -i)) for a, b in long]
+    return sorted(best, key=lambda i: (-rank[i], i))
 
 
 def gaussian_taps(sigma):
@@ -503,6 +622,29 @@ def generate(dest: Path):
     make_person(person, dest / "gym_b_in.png", dest / "comic_in.png")
     m.record("synthetic_person.mp4", person, file=person.name, dtype="h264", shape=[24, 180, 320],
              note="gym_b face panning 12 frames | comic 12 frames")
+    cover = dest / "synthetic_cover.mp4"
+    make_cover(cover, dest / "gym_b_in.png", dest / "comic_in.png")
+    cover_times = frame_times(cover)
+    n_cover = len(cover_times)
+    m.record("synthetic_cover.mp4", cover, file=cover.name, dtype="h264", shape=[n_cover, 180, 320],
+             note="gym_b blurred | sharp | overexposed, dissolve to comic, comic still, comic panning 0.5 s")
+    feat = cover_features(cover, n_cover)
+    m.tensor("cover_features", torch.from_numpy(feat.astype(np.float32)),
+             "per frame: laplacian variance, hi, lo, mean, diff prev, diff next (float64 -> float32)")
+    scores = cover_scores(feat, COVER_FACES, COVER_SHOTS, cover_times)
+    ranks = cover_scores(feat, COVER_FACES, COVER_SHOTS, cover_times, within_shot=False)
+    plain = cover_scores(feat, [], COVER_SHOTS, cover_times)
+    m.tensor("cover_scores", torch.from_numpy(np.stack([scores, ranks, plain]).astype(np.float32)),
+             "pick / rank with COVER_FACES, pick without faces; COVER_SHOTS; float64 -> float32")
+    w0, h0 = probe_size(cover)
+    y0 = cover_luma(yuv_planes(cover, 0, w0, h0)[0])
+    m.tensor("cover_resized", torch.from_numpy(cover_resize(y0, *COVER_RESIZE).astype(np.float32)),
+             f"frame 0 luma resized to {COVER_RESIZE}, bilinear align_corners=False")
+    best = cover_best(scores, ranks, COVER_SHOTS, cover_times)
+    best_plain = cover_best(plain, cover_scores(feat, [], COVER_SHOTS, cover_times, within_shot=False),
+                            COVER_SHOTS, cover_times)
+    if not any(20 <= b <= 39 for b in best_plain):
+        sys.exit(f"cover fixture: without faces the gym shot should pick a sharp frame (20-39), got {best_plain}")
     srt = dest / "subtitles_sample.srt"
     srt.write_bytes(SUBTITLE_SAMPLE.encode("utf-8"))
     m.record("subtitles_sample.srt", srt, file=srt.name, dtype="text", shape=[], note="BOM, CRLF and LF, missing number, bad block, overlap")
@@ -512,8 +654,11 @@ def generate(dest: Path):
             background_cases=[{"name": n, "effect": e[0], "sigma": e[1] if e[0] == "blur" else 0,
                                "colour": list(e[1]) if e[0] == "colour" else [0, 0, 0]} for n, e in BG_EFFECTS],
             upstream="AdaInt@5678851339dff90becb09c3dec41e7214207ccbc",
-            torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times)
+            torch=torch.__version__, cut_threshold=CUT, synthetic_shots=expected, vfr_frame_times=vfr_times,
+            cover={"shots": COVER_SHOTS, "faces": COVER_FACES, "best": best, "best_without_faces": best_plain,
+                   "resize": list(COVER_RESIZE)})
     print(f"synthetic shots: {expected}")
+    print(f"cover best frames: {best}, scores {[round(float(scores[i]), 4) for i in best]}")
 
 
 def digest(folder: Path):
