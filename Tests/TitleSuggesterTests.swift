@@ -145,6 +145,17 @@ final class TitleSuggesterTests: XCTestCase {
         XCTAssertEqual(none.sent.count, 0, "nothing is sent without input")
     }
 
+    func testFromCuesAndTheLimitPerShape() {
+        let cues = [SubtitleCue(start: 0, end: 1, lines: ["第一次", "在草原上骑马"]), SubtitleCue(start: 1, end: 2, lines: ["风很大"])]
+        let r = TitleRequest(topic: nil, cues: cues, aspects: [.landscape16x9], sourceWidth: 1920, sourceHeight: 1080)
+        XCTAssertEqual(r.transcript, "第一次 在草原上骑马\n风很大")
+        XCTAssertEqual(r.limit, 16)
+        XCTAssertEqual(TitleRequest.limit(for: [.landscape16x9, .portrait3x4], sourceWidth: 1920, sourceHeight: 1080), 12)
+        XCTAssertEqual(TitleRequest.limit(for: [.original], sourceWidth: 1920, sourceHeight: 1080), 16)
+        XCTAssertEqual(TitleRequest.limit(for: [.original], sourceWidth: 1080, sourceHeight: 1920), 12, "a vertical clip's own frame is tall")
+        XCTAssertNil(TitleRequest(topic: "x", cues: [], aspects: [.landscape4x3], sourceWidth: 1920, sourceHeight: 1080).transcript)
+    }
+
     func testThinInput() {
         XCTAssertTrue(TitleRequest(topic: "伊斯坦布尔日落").isThin, "a topic alone gives near-identical candidates")
         XCTAssertFalse(TitleRequest(topic: "日落", transcript: "在老港口走了一下午").isThin)

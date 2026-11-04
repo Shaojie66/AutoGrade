@@ -22,6 +22,23 @@ public struct TitleRequest: Sendable, Equatable {
         transcript.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// From subtitles: the cues' text in order, one cue per line.
+    public init(topic: String?, cues: [SubtitleCue], aspects: [CoverAspect], sourceWidth: Int, sourceHeight: Int,
+                exclude: [String] = []) {
+        let text = cues.map { $0.lines.joined(separator: " ") }.filter { !$0.isEmpty }.joined(separator: "\n")
+        self.init(topic: topic, transcript: text.isEmpty ? nil : text,
+                  limit: TitleRequest.limit(for: aspects, sourceWidth: sourceWidth, sourceHeight: sourceHeight), exclude: exclude)
+    }
+
+    /// 12 characters when any cover is taller than wide (3:4, or the original
+    /// frame of a vertical clip), else 16 (CLAUDE.md 封面 / 输出约束).
+    public static func limit(for aspects: [CoverAspect], sourceWidth: Int, sourceHeight: Int) -> Int {
+        aspects.contains {
+            let (w, h) = $0.outputSize(sourceWidth: sourceWidth, sourceHeight: sourceHeight)
+            return h > w
+        } ? 12 : 16
+    }
+
     /// Nothing to go on but a topic: candidates come out nearly alike (probe round 2).
     public var isThin: Bool { cleanTranscript == nil }
     public var isEmpty: Bool { cleanTopic == nil && cleanTranscript == nil }
