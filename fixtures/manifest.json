@@ -1008,6 +1008,18 @@
       "sha256": "d6d34c3ec632a89a6b195c06944c1fe67d68c407fae32a81322cfff5f56323a5",
       "bytes": 887763
     },
+    "synthetic_ntsc.mp4": {
+      "file": "synthetic_ntsc.mp4",
+      "dtype": "h264",
+      "shape": [
+        30,
+        180,
+        320
+      ],
+      "note": "testsrc2, 30 frames at 30000/1001 fps, time scale 30000",
+      "sha256": "9e684f9bf5229c6b6218498e03381180420503ed75739f2b1980b63f3adeed63",
+      "bytes": 41962
+    },
     "synthetic_person.mp4": {
       "file": "synthetic_person.mp4",
       "dtype": "h264",

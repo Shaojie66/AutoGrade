@@ -49,6 +49,8 @@ public struct VideoInfo: Sendable {
     public let height: Int
     public let nominalFrameRate: Float
     public let duration: CMTime
+    /// The video track's own time scale; the export writes its track in it (CLAUDE.md 导出).
+    public let timeScale: CMTimeScale
 }
 
 /// One decoded frame: the decoder's own 4:2:0 planes as Metal textures.
@@ -114,12 +116,14 @@ public final class VideoReader {
         let loaded = try blocking {
             guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw VideoError.noVideoTrack }
             return Unchecked((track, try await track.load(.naturalSize), try await track.load(.nominalFrameRate),
-                              try await track.load(.formatDescriptions), try await asset.load(.duration)))
+                              try await track.load(.formatDescriptions), try await asset.load(.duration),
+                              try await track.load(.naturalTimeScale)))
         }
-        let (track, size, rate, formats, duration) = loaded.value
+        let (track, size, rate, formats, duration, timeScale) = loaded.value
         guard let format = formats.first else { throw VideoError.unsupported("no format description") }
         warnings = checkingFormat ? try Self.checkFormat(format) : []
-        info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration)
+        info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration,
+                         timeScale: timeScale)
         guard info.width % 2 == 0, info.height % 2 == 0 else {
             throw VideoError.unsupported("odd frame size \(info.width)x\(info.height)")
         }
@@ -225,7 +229,11 @@ public final class VideoWriter {
     public var audioPackets: Int? { audio?.packets }
 
     /// `audioFrom`: copy that file's first audio track as it is (CLAUDE.md 导出).
-    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice, audioFrom: URL? = nil) throws {
+    /// `timeScale`: the video track's time scale, the source's (CLAUDE.md 导出): the
+    /// writer's default 600 cannot hold 1001/30000 s, so 29.97 / 59.94 fps frames
+    /// were rounded and no longer at the source's times (2026-11-04, DJI clip).
+    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice, audioFrom: URL? = nil,
+                timeScale: CMTimeScale? = nil) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             throw VideoError.writer("\(url.path) already exists (refusing to overwrite)")
         }
@@ -245,6 +253,10 @@ public final class VideoWriter {
         }
         input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
+        if let timeScale, timeScale > 0 {
+            input.mediaTimeScale = timeScale
+            writer.movieTimeScale = timeScale
+        }
         adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width,
