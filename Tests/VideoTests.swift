@@ -52,10 +52,44 @@ final class VideoTests: XCTestCase {
 
     func testYUVToRGBMatchesConvention() throws {
         let f = try frame(15)
-        let rgb = try kernels.yuvToRGB(luma: f.luma, chroma: f.chroma).floats()
+        let rgb = try kernels.yuvToRGB(luma: f.luma, chroma: f.chroma, fullRange: f.fullRange).floats()
         let err = maxAbsDifference(rgb, try Fixtures.floats("synthetic_f15_rgb").values)
         print("yuv→rgb frame 15: max \(err)")
         XCTAssertLessThanOrEqual(err, 1e-5)
+    }
+
+    /// forEachFrame drains an autorelease pool per frame: an object autoreleased
+    /// while handling frame i is gone before frame i + 1 (2026-11-04: without it
+    /// a 689-frame 5.3K analysis grew to ~1 GB).
+    func testForEachFrameDrainsAPoolPerFrame() throws {
+        final class Token: NSObject {
+            let onDeinit: () -> Void
+            init(_ onDeinit: @escaping () -> Void) { self.onDeinit = onDeinit }
+            deinit { onDeinit() }
+        }
+        var events: [String] = []
+        var visited: [Int] = []
+        let reader = try VideoReader(url: Fixtures.url("synthetic_shots.mp4"), device: metal.device)
+        try reader.forEachFrame { f in
+            events.append("frame \(f.index)")
+            visited.append(f.index)
+            let t = Token { events.append("freed \(f.index)") }
+            _ = Unmanaged.passUnretained(t).retain().autorelease()   // one reference held by the pool
+        }
+        XCTAssertEqual(visited, Array(0..<90))
+        for i in 0..<89 {
+            let freed = try XCTUnwrap(events.firstIndex(of: "freed \(i)"), "frame \(i)'s object was never freed")
+            let next = try XCTUnwrap(events.firstIndex(of: "frame \(i + 1)"))
+            XCTAssertLessThan(freed, next, "frame \(i)'s autoreleased object outlived the frame")
+        }
+    }
+
+    func testForEachFrameStopsOnAThrow() throws {
+        struct Stop: Error {}
+        var seen = 0
+        let reader = try VideoReader(url: Fixtures.url("synthetic_shots.mp4"), device: metal.device)
+        XCTAssertThrowsError(try reader.forEachFrame { f in seen += 1; if f.index == 4 { throw Stop() } })
+        XCTAssertEqual(seen, 5)
     }
 
     func testRefusesExistingOutput() throws {

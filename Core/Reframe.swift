@@ -264,7 +264,7 @@ extension AutoGrader {
         let start = CFAbsoluteTimeGetCurrent()
         let reader = try VideoReader(url: url, device: metal.device)
         var samples: [SubjectTrack.Sample?] = []
-        while let frame = try reader.next() {
+        try reader.forEachFrame { frame in
             if cancel?.isCancelled == true { throw Cancelled() }
             samples.append(try Reframe.detect(frame.pixelBuffer))
             progress?(frame.index)

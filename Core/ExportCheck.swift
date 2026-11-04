@@ -68,17 +68,19 @@ public enum ExportCheck {
 extension AutoGrader {
     /// Check an export `render` just wrote against the analysis it was made from.
     /// Never touches the file; a failed check is reported, not acted on.
+    /// `expectedHook` sees each sampled frame's expected BGRA bytes before they are
+    /// compared (tests: the expectation must be the export's own bytes).
     public func checkExport(_ output: URL, source: URL, analysis: Analysis, luts: [LUT3D],
-                            render: RenderResult) throws -> ExportReport {
+                            render: RenderResult, expectedHook: ((Int, [UInt8]) -> Void)? = nil) throws -> ExportReport {
         let start = CFAbsoluteTimeGetCurrent()
         var report = ExportReport()
-        try check(output, source: source, analysis: analysis, luts: luts, render: render, into: &report)
+        try check(output, source: source, analysis: analysis, luts: luts, render: render, expectedHook: expectedHook, into: &report)
         report.seconds = CFAbsoluteTimeGetCurrent() - start
         return report
     }
 
     private func check(_ output: URL, source: URL, analysis: Analysis, luts: [LUT3D], render: RenderResult,
-                       into report: inout ExportReport) throws {
+                       expectedHook: ((Int, [UInt8]) -> Void)?, into report: inout ExportReport) throws {
 
         // 1. video samples: every timestamp, without decoding
         let video = try Samples.read(output, .video)
@@ -154,6 +156,9 @@ extension AutoGrader {
             try Enhancer(settings: $0, width: analysis.info.width, height: analysis.info.height, kernels: kernels)
         }
         for k in ExportCheck.sampledShots(analysis.shots.count) {
+            // one pool per sample: at 5.3K each sample's buffers are ~0.6 GB and a command-line
+            // process has no run loop to drain them (2026-11-04: check peaked at 3.6 GB)
+            try autoreleasepool {
             let shot = analysis.shots[k], index = (shot.first + shot.last) / 2
             let sourceFrame = try decodeFrame(source, analysis: analysis, index: index, enhancer: enhancer, exact: true)
             let texture: MTLTexture
@@ -166,14 +171,15 @@ extension AutoGrader {
             }
             var expected = [UInt8](repeating: 0, count: w * h * 4)
             texture.getBytes(&expected, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+            expectedHook?(index, expected)
 
             let reader = try VideoReader(url: output, device: metal.device, timeRange: analysis.timeRange(first: index, last: index),
                                          frameTimes: analysis.frameTimes, checkingFormat: false)
             guard let decoded = try reader.next(), decoded.index == index else {
                 report.failures.append("shot \(k + 1): frame \(index) could not be decoded from the export")
-                continue
+                return
             }
-            let rgb = try kernels.yuvToRGB(luma: decoded.luma, chroma: decoded.chroma).floats()
+            let rgb = try kernels.yuvToRGB(luma: decoded.luma, chroma: decoded.chroma, fullRange: decoded.fullRange).floats()
             let n = w * h
             var sumAbs = 0.0, bias = [0.0, 0.0, 0.0]
             for i in 0..<n {
@@ -213,6 +219,7 @@ extension AutoGrader {
                 report.failures.append(String(format: "shot %d (frame %d) does not match its grade: mean %.2f levels, "
                                               + "bias R %+.2f G %+.2f B %+.2f", k + 1, index, frame.meanAbs,
                                               frame.bias[0], frame.bias[1], frame.bias[2]))
+            }
             }
         }
     }

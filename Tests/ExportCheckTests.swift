@@ -30,6 +30,27 @@ final class ExportCheckTests: XCTestCase {
         return (out, try engine.render(source, analysis: a, luts: luts ?? a.luts, to: out, codec: codec, audio: audio))
     }
 
+    /// 29.97 fps with a 1/30000 time scale, as DJI and GoPro write it: the export
+    /// keeps every frame at the source's time and passes the check (2026-11-04:
+    /// the writer's default time scale 600 rounded 1001/30000 s and the check failed).
+    func testNTSCFrameTimesSurviveTheExport() throws {
+        let ntsc = Fixtures.url("synthetic_ntsc.mp4")
+        let a = try analyze(ntsc)
+        XCTAssertEqual(a.frameCount, 30)
+        XCTAssertEqual(a.frameTimes[1], CMTime(value: 1001, timescale: 30000))
+        XCTAssertEqual(a.info.timeScale, 30000)
+        for codec in OutputCodec.allCases {
+            let (out, result) = try render(ntsc, a, codec: codec)
+            let report = try engine.checkExport(out, source: ntsc, analysis: a, luts: a.luts, render: result)
+            log("ntsc \(codec)", report)
+            XCTAssertTrue(report.passed, "\(codec): \(report.failures)")
+            let reader = try VideoReader(url: out, device: engine.metal.device, checkingFormat: false)
+            var times: [CMTime] = []
+            while let f = try reader.next() { times.append(f.presentationTime) }
+            XCTAssertEqual(times, a.frameTimes, "\(codec): frames moved off the source's times")
+        }
+    }
+
     private func log(_ name: String, _ r: ExportReport) {
         for f in r.frames {
             print(String(format: "%@ shot %d frame %d: mean %.2f, bias %+.2f %+.2f %+.2f", name, f.shot, f.frame,

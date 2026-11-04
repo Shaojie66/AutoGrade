@@ -23,7 +23,7 @@ final class ExportRoundTripTests: XCTestCase {
         let reader = try VideoReader(url: out, device: engine.metal.device)
         while let f = try reader.next() {
             guard probe.contains(f.index), let sent = handed[f.index] else { continue }
-            let rgb = try engine.kernels.yuvToRGB(luma: f.luma, chroma: f.chroma).floats()
+            let rgb = try engine.kernels.yuvToRGB(luma: f.luma, chroma: f.chroma, fullRange: f.fullRange).floats()
             let n = rgb.count / 3
             var bias = [0.0, 0.0, 0.0]                    // decoded - handed, in 8-bit levels, per R G B
             for i in 0..<n {

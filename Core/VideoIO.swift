@@ -49,6 +49,10 @@ public struct VideoInfo: Sendable {
     public let height: Int
     public let nominalFrameRate: Float
     public let duration: CMTime
+    /// The video track's own time scale; the export writes its track in it (CLAUDE.md 导出).
+    public let timeScale: CMTimeScale
+    /// Full-range ('420f') planes; false is limited ('420v'), also when untagged (CLAUDE.md 架构原则 4).
+    public let fullRange: Bool
 }
 
 /// One decoded frame: the decoder's own 4:2:0 planes as Metal textures.
@@ -59,11 +63,18 @@ public struct DecodedFrame {
     public let pixelBuffer: CVPixelBuffer
     public let luma: MTLTexture
     public let chroma: MTLTexture
+    /// The planes' range, from the buffer's pixel format: '420f' full, '420v' limited.
+    public let fullRange: Bool
     let lumaRef: CVMetalTexture
     let chromaRef: CVMetalTexture
 
-    /// Metal views of a '420v' buffer's two planes.
+    /// Metal views of a '420v' or '420f' buffer's two planes.
     init(index: Int, presentationTime: CMTime, pixelBuffer: CVPixelBuffer, cache: CVMetalTextureCache) throws {
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        guard format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange else {
+            throw VideoError.reader("unexpected pixel format \(format)")
+        }
+        fullRange = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         func texture(_ plane: Int, _ format: MTLPixelFormat) throws -> CVMetalTexture {
             var tex: CVMetalTexture?
             let status = CVMetalTextureCacheCreateTextureFromImage(
@@ -82,9 +93,9 @@ public struct DecodedFrame {
     }
 }
 
-/// Sequential decoder. Accepts only 8-bit 4:2:0 BT.709 limited range (or
+/// Sequential decoder. Accepts only 8-bit 4:2:0 BT.709, limited or full range (or
 /// untagged, treated as BT.709); anything else is refused rather than guessed
-/// (CLAUDE.md 架构原则 4). Output is the decoder's native '420v' planes, so no
+/// (CLAUDE.md 架构原则 4). Output is the decoder's native '420v' / '420f' planes, so no
 /// colour conversion happens before our own kernel.
 ///
 /// Reading from the start numbers frames by count. Reading a `timeRange`
@@ -114,20 +125,26 @@ public final class VideoReader {
         let loaded = try blocking {
             guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw VideoError.noVideoTrack }
             return Unchecked((track, try await track.load(.naturalSize), try await track.load(.nominalFrameRate),
-                              try await track.load(.formatDescriptions), try await asset.load(.duration)))
+                              try await track.load(.formatDescriptions), try await asset.load(.duration),
+                              try await track.load(.naturalTimeScale)))
         }
-        let (track, size, rate, formats, duration) = loaded.value
+        let (track, size, rate, formats, duration, timeScale) = loaded.value
         guard let format = formats.first else { throw VideoError.unsupported("no format description") }
         warnings = checkingFormat ? try Self.checkFormat(format) : []
-        info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration)
+        let fullRange = Self.isFullRange(format)
+        info = VideoInfo(width: Int(size.width), height: Int(size.height), nominalFrameRate: rate, duration: duration,
+                         timeScale: timeScale, fullRange: fullRange)
         guard info.width % 2 == 0, info.height % 2 == 0 else {
             throw VideoError.unsupported("odd frame size \(info.width)x\(info.height)")
         }
 
         reader = try AVAssetReader(asset: asset)
         if let timeRange { reader.timeRange = timeRange }
+        // the decoder's own range: a full-range source read as '420v' is range-converted
+        // by the system first, one more lossy step (CLAUDE.md 架构原则 4)
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferPixelFormatTypeKey as String: fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                                                  : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferMetalCompatibilityKey as String: true,
         ])
         output.alwaysCopiesSampleData = false
@@ -166,10 +183,13 @@ public final class VideoReader {
             || transfer == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) {
             throw VideoError.unsupported("HDR transfer \(transfer)")
         }
-        if let full = ext[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool, full {
-            throw VideoError.unsupported("full-range video (only limited range is supported)")
-        }
         return warnings
+    }
+
+    /// The format description's full-range flag; untagged is limited.
+    static func isFullRange(_ format: CMFormatDescription) -> Bool {
+        let ext = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
+        return ext[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool ?? false
     }
 
     /// The next frame in decode-output (presentation) order, or nil at the end.
@@ -193,6 +213,18 @@ public final class VideoReader {
             nextIndex += 1
         }
         return try DecodedFrame(index: index, presentationTime: pts, pixelBuffer: pixelBuffer, cache: cache)
+    }
+
+    /// Every remaining frame, each inside its own autorelease pool: a frame's
+    /// Metal and CoreVideo objects (and the ~190 MB float image a 5.3K frame
+    /// converts to) are freed as it goes. Without it a command-line pass, which
+    /// has no run loop to drain the pool, grew to ~1 GB on 689 GoPro frames.
+    public func forEachFrame(_ body: (DecodedFrame) throws -> Void) throws {
+        while try autoreleasepool(invoking: {
+            guard let frame = try next() else { return false }
+            try body(frame)
+            return true
+        }) {}
     }
 
     static func index(of time: CMTime, in times: [CMTime]) -> Int? {
@@ -225,7 +257,11 @@ public final class VideoWriter {
     public var audioPackets: Int? { audio?.packets }
 
     /// `audioFrom`: copy that file's first audio track as it is (CLAUDE.md 导出).
-    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice, audioFrom: URL? = nil) throws {
+    /// `timeScale`: the video track's time scale, the source's (CLAUDE.md 导出): the
+    /// writer's default 600 cannot hold 1001/30000 s, so 29.97 / 59.94 fps frames
+    /// were rounded and no longer at the source's times (2026-11-04, DJI clip).
+    public init(url: URL, width: Int, height: Int, codec: OutputCodec, device: MTLDevice, audioFrom: URL? = nil,
+                timeScale: CMTimeScale? = nil) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             throw VideoError.writer("\(url.path) already exists (refusing to overwrite)")
         }
@@ -245,6 +281,10 @@ public final class VideoWriter {
         }
         input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
+        if let timeScale, timeScale > 0 {
+            input.mediaTimeScale = timeScale
+            writer.movieTimeScale = timeScale
+        }
         adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width,

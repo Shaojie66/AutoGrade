@@ -94,7 +94,8 @@ public enum Cover {
         return (Int((Double(width) * Double(analysisHeight) / Double(height) + 0.5).rounded(.down)), analysisHeight)
     }
 
-    /// Y' = clamp((Y - 16) / 219, 0, 1) of a '420v' buffer, at the analysis size.
+    /// Y' of a '420v' buffer, clamp((Y - 16) / 219, 0, 1), or of a '420f' one, Y / 255
+    /// (CLAUDE.md 架构原则 4: the range is the buffer's pixel format), at the analysis size.
     /// Bilinear, align_corners=False, no antialias (PyTorch's formula); the clamp
     /// is applied per source sample, as numpy clamps before resizing.
     public static func luma(_ pixels: CVPixelBuffer) -> (width: Int, height: Int, values: [Double]) {
@@ -103,7 +104,8 @@ public enum Cover {
         let w = CVPixelBufferGetWidthOfPlane(pixels, 0), h = CVPixelBufferGetHeightOfPlane(pixels, 0)
         let row = CVPixelBufferGetBytesPerRowOfPlane(pixels, 0)
         let base = CVPixelBufferGetBaseAddressOfPlane(pixels, 0)!.assumingMemoryBound(to: UInt8.self)
-        let table = (0..<256).map { min(max((Double($0) - 16) / 219, 0), 1) }
+        let full = CVPixelBufferGetPixelFormatType(pixels) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        let table = (0..<256).map { full ? Double($0) / 255 : min(max((Double($0) - 16) / 219, 0), 1) }
         let (aw, ah) = analysisSize(width: w, height: h)
         if (aw, ah) == (w, h) {
             var out = [Double](repeating: 0, count: w * h)
@@ -336,11 +338,11 @@ extension AutoGrader {
                                           height: targets.sourceHeight)
         try metal.run { enc in
             if let cropped = targets.cropped {
-                try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
+                try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, fullRange: f.fullRange, lut: lut, scratch: targets.scratch,
                                              crop: origin, length: length, cropped: cropped, output: targets.output,
                                              background: frame.background, overlay: title)
             } else {
-                try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, lut: lut, scratch: targets.scratch,
+                try kernels.encodeGradeFrame(into: enc, luma: f.luma, chroma: f.chroma, fullRange: f.fullRange, lut: lut, scratch: targets.scratch,
                                              graded: targets.output, original: nil, background: frame.background,
                                              overlay: title)
             }

@@ -561,7 +561,8 @@ actor Engine {
         var dropped = 0, shown = 0
         var window: [ContinuousClock.Instant] = []
         while !Task.isCancelled {
-            guard let decoded = try? stream.next() else { break }
+            // a per-frame pool for decoding: this loop never returns to a run loop while playing
+            guard let decoded = try? autoreleasepool(invoking: { try stream.next() }) else { break }
             let now = (clock.now - t0) / .seconds(1)
             guard let at = schedule.schedule(pts: decoded.frame.presentationTime.seconds, now: now,
                                              slack: slack / .seconds(1)) else {

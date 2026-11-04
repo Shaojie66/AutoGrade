@@ -18,6 +18,8 @@ Contents
                 synthetic_av.mp4: 3 s testsrc2 + 10 s 440 Hz AAC (audio passthrough)
                 synthetic_av_880.mp4: the same video + 10 s 880 Hz (audio that must not match)
                 synthetic_subject.mp4: a disk moving left to right over noise (subject detection)
+                synthetic_ntsc.mp4: 29.97 fps with a 1/30000 time scale (export time stamps)
+                synthetic_fullrange.mp4 + fullrange_f15_{y,cb,cr,rgb}: full-range source, frame 15 planes and RGB
   crop        crop_*: crop-and-resize (reframe) cases, see CROP_CASES and the manifest
   overlay     overlay_rgba.u8 + overlay_*: subtitle compositing (premultiplied over)
   background  bg_image / bg_mask + bg_blur / bg_colour: person-mask compositing;
@@ -113,6 +115,28 @@ def make_synthetic(path):
     graph = ";".join(f"{s},trim=duration=1,setpts=PTS-STARTPTS[v{i}]" for i, s in enumerate(sources))
     graph += ";[v0][v1][v2]concat=n=3:v=1:a=0,format=yuv420p[out]"
     ffmpeg("-filter_complex", graph, "-map", "[out]",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_fullrange(path):
+    """1 s of testsrc2 encoded full range (yuvj420p, H.264 VUI full_range_flag), BT.709
+    tags, as GoPro writes it: luma reaches below 16 and above 235."""
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30,trim=end_frame=30",
+           "-vf", "scale=out_color_matrix=bt709:out_range=full,format=yuvj420p",
+           "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "pc", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
+           "-an", "-fflags", "+bitexact", str(path))
+
+
+def make_ntsc(path):
+    """1 s of testsrc2 at 30000/1001 fps with a 1/30000 track time scale, as DJI and
+    GoPro write it: 1001/30000 s is not a multiple of 1/600 (the writer's default)."""
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30000/1001,trim=end_frame=30",
+           "-pix_fmt", "yuv420p", "-video_track_timescale", "30000",
            "-c:v", "libx264", "-preset", "veryslow", "-crf", "18", "-g", "30",
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-color_range", "tv", "-bitexact", "-threads", "1", "-x264-params", "threads=1",
@@ -442,9 +466,11 @@ def frame_times(path):
     return [float(t.strip(",")) for t in out.split()]
 
 
-def yuv_planes(path, index, w, h):
+def yuv_planes(path, index, w, h, pix_fmt="yuv420p"):
+    """The decoder's planes as coded: `pix_fmt` must match the stream's range
+    (yuvj420p for full range), or ffmpeg converts the range on the way out."""
     raw = ffmpeg("-i", str(path), "-fps_mode", "passthrough", "-vf", f"select=eq(n\\,{index})",
-                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-")
+                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", pix_fmt, "-")
     a = np.frombuffer(raw, np.uint8)
     y = a[:w * h].reshape(h, w)
     cb = a[w * h:w * h + w * h // 4].reshape(h // 2, w // 2)
@@ -475,6 +501,18 @@ def yuv709_to_rgb(y, cb, cr):
     yy = (y.astype(np.float64) - 16) / 219
     u = (chroma_up(cb, w, h) - 128) / 224
     v = (chroma_up(cr, w, h) - 128) / 224
+    r = yy + 1.5748 * v
+    g = yy - 0.187324 * u - 0.468124 * v
+    b = yy + 1.8556 * u
+    return np.clip(np.stack([r, g, b]), 0, 1).astype(np.float32)[None]
+
+
+def yuv709_full_to_rgb(y, cb, cr):
+    """BT.709, 8-bit full range (H.273): Y' = Y/255, C' = (C-128)/255; same matrix and chroma rule."""
+    h, w = y.shape
+    yy = y.astype(np.float64) / 255
+    u = (chroma_up(cb, w, h) - 128) / 255
+    v = (chroma_up(cr, w, h) - 128) / 255
     r = yy + 1.5748 * v
     g = yy - 0.187324 * u - 0.468124 * v
     b = yy + 1.8556 * u
@@ -569,6 +607,24 @@ def generate(dest: Path):
     make_subject(subject)
     m.record("synthetic_subject.mp4", subject, file=subject.name, dtype="h264", shape=[90, 180, 320],
              note="disk r=20 at x = 60 + 60 t, y = 90, over grey noise")
+    full = dest / "synthetic_fullrange.mp4"
+    make_fullrange(full)
+    m.record("synthetic_fullrange.mp4", full, file=full.name, dtype="h264", shape=[30, 180, 320],
+             note="testsrc2, 30 frames, H.264 full range (yuvj420p), bt709 tags")
+    fy, fcb, fcr = yuv_planes(full, 15, 320, 180, pix_fmt="yuvj420p")
+    if not (fy.min() < 16 and fy.max() > 235):
+        sys.exit(f"synthetic_fullrange: luma {fy.min()}..{fy.max()} does not leave 16..235, cannot tell the ranges apart")
+    for name, plane in (("y", fy), ("cb", fcb), ("cr", fcr)):
+        path = dest / f"fullrange_f15_{name}.u8"
+        path.write_bytes(plane.tobytes())
+        m.record(f"fullrange_f15_{name}", path, file=path.name, dtype="uint8", shape=list(plane.shape),
+                 note="decoder output plane, full range as coded")
+    m.tensor("fullrange_f15_rgb", torch.from_numpy(yuv709_full_to_rgb(fy, fcb, fcr)),
+             "bt709 full range (H.273), chroma bilinear at (x/2, (y-0.5)/2), clamp")
+    ntsc = dest / "synthetic_ntsc.mp4"
+    make_ntsc(ntsc)
+    m.record("synthetic_ntsc.mp4", ntsc, file=ntsc.name, dtype="h264", shape=[30, 180, 320],
+             note="testsrc2, 30 frames at 30000/1001 fps, time scale 30000")
 
     # crop-and-resize: the numpy reference must equal PyTorch on whole frames first
     sources = {"demo_resized256": tensors["demo"][0], "gym_a_in": tensors["gym_a"][0]}
