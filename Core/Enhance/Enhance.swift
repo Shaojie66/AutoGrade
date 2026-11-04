@@ -239,7 +239,7 @@ extension AutoGrader {
         let reader = try VideoReader(url: url, device: metal.device)
         var out: [Float] = []
         out.reserveCapacity(analysis.frameCount)
-        while let frame = try reader.next() {
+        try reader.forEachFrame { frame in
             if cancel?.isCancelled == true { throw Cancelled() }
             out.append(PersonSegmentation.coverage(try PersonSegmentation.mask(frame.pixelBuffer)))
             progress?(frame.index)
