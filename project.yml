@@ -80,8 +80,10 @@ targets:
   AutoGradeAppTests:
     type: bundle.unit-test
     platform: macOS
-    # compiles the language files directly: no app host needed
-    sources: [App/Localization, AppTests]
+    # compiles the app's non-view code directly (language, state, engine): no app host needed
+    sources: [App/Localization, App/Model, App/Service, AppTests]
+    dependencies:
+      - target: AutoGradeCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenshaojie.autograde.apptests

@@ -91,8 +91,9 @@ actor Engine {
     nonisolated let styles: [Style]
     nonisolated let styleWarnings: [String]
 
-    init() throws {
-        core = try AutoGrader()
+    /// `stylesDirectory` nil grades with FiveK only (AppTests).
+    init(stylesDirectory: URL? = StyleCatalog.defaultDirectory) throws {
+        core = try AutoGrader(stylesDirectory: stylesDirectory)
         styles = core.catalog.styles
         styleWarnings = core.catalog.warnings
     }

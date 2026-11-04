@@ -93,10 +93,11 @@ final class Project {
     private var pendingFrame: Int?
     private var playTask: Task<Void, Never>?
 
-    init() {
+    /// `stylesDirectory` nil: FiveK only (AppTests); the app uses the default.
+    init(stylesDirectory: URL? = StyleCatalog.defaultDirectory) {
         var missing: String?
         do {
-            let engine = try Engine()
+            let engine = try Engine(stylesDirectory: stylesDirectory)
             self.engine = engine
             availableStyles = engine.styles
             let stored = UserDefaults.standard.string(forKey: Self.defaultStyleKey) ?? StyleCatalog.builtinID
